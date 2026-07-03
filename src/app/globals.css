@@ -87,6 +87,7 @@
     color-scheme: dark;
     background-color: var(--bg-base);
     transition: background-color 0.3s ease, color 0.3s ease;
+    overscroll-behavior: none;
   }
   [data-theme="light"] {
     color-scheme: light;
@@ -96,6 +97,7 @@
     background-color: var(--bg-base);
     color: var(--text-primary);
     transition: background-color 0.3s ease, color 0.3s ease;
+    overscroll-behavior: none;
   }
   
   /* Hide all scrollbars globally */
