@@ -380,8 +380,8 @@ function QualityBadgePicker({
       {open && (
         <div
           role="listbox"
-          className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-[80] w-64 rounded-xl p-1.5 shadow-[0_20px_60px_rgba(0,0,0,0.7)]"
-          style={{ background: "#161a24", border: "1px solid rgba(255,255,255,0.09)" }}
+          className="absolute left-0 lg:left-1/2 lg:-translate-x-1/2 top-full mt-3 z-[80] w-64 rounded-2xl p-2 shadow-[0_30px_60px_rgba(0,0,0,0.6)] backdrop-blur-2xl animate-in fade-in slide-in-from-top-2 duration-200"
+          style={{ background: "rgba(15,23,42,0.6)", border: "1px solid rgba(255,255,255,0.1)" }}
         >
           {options.map((opt) => {
             const active = quality === opt.value;
@@ -391,25 +391,27 @@ function QualityBadgePicker({
                 role="option"
                 aria-selected={active}
                 onClick={() => { onChange(opt.value); setOpen(false); }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors hover:bg-white/5"
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 hover:bg-white/10 active:scale-95 ${active ? "bg-white/5" : ""}`}
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-bold" style={{ color: active ? "var(--accent, #2dd4bf)" : "#fff" }}>
                     {opt.title}
                   </p>
-                  <p className="text-[11px] text-slate-400">{opt.desc}</p>
+                  <p className="text-[11px] text-slate-400 font-medium">{opt.desc}</p>
                 </div>
                 {active && (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #2dd4bf)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #2dd4bf)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="drop-shadow-md">
                     <path d="M20 6L9 17l-5-5" />
                   </svg>
                 )}
               </button>
             );
           })}
-          <p className="px-3 pt-1.5 pb-1 text-[10px] text-slate-500 border-t border-white/5 mt-1">
-            Changing quality restarts the current song
-          </p>
+          <div className="mx-2 mt-2 mb-1 pt-2 border-t border-white/10">
+            <p className="text-[10px] text-slate-400/80 font-medium text-center">
+              Changing quality restarts the current song
+            </p>
+          </div>
         </div>
       )}
     </div>
