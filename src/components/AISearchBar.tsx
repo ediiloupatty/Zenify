@@ -20,6 +20,12 @@ type AISearchBarProps = {
 const indexFetcher = (url: string) =>
   fetch(url).then((r) => r.json() as Promise<{ tracks: Track[] }>);
 
+// Stable identity for the no-prop case. An inline `= []` default would mint a
+// new array every render, which cascades into a new Fuse index every render
+// and turns the prevFuse render-adjustment below into an infinite loop
+// (React #301) whenever the lazy index hasn't arrived yet.
+const NO_TRACKS: Track[] = [];
+
 // Mood / intent words (ID + EN) that should route a query to the AI even when
 // it's short — e.g. "lagu sedih", "musik santai", "happy songs".
 const AI_INTENT_PATTERN =
@@ -46,7 +52,7 @@ function SearchTrackCover({ track }: { track: Track }) {
   );
 }
 
-export default function AISearchBar({ allTracks = [], onFilteredTracks }: AISearchBarProps) {
+export default function AISearchBar({ allTracks = NO_TRACKS, onFilteredTracks }: AISearchBarProps) {
   // Lazy full-library index: fetched once per session on the first focus of
   // the input, then cached by SWR. Searching over this instead of the page's
   // own (often partial) track list fixes "no results" on filtered pages.
