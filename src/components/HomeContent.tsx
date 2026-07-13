@@ -16,13 +16,14 @@ import DailyMixSection from "@/components/DailyMixSection";
 import { hashString, PALETTES } from "@/lib/utils";
 import CoverImage from "@/components/CoverImage";
 import TrackDuration from "@/components/TrackDuration";
+import { pickRandom } from "@/lib/pickRandom";
 
 type HomeContentProps = {
   tracks: Track[];
   currentCategory: string | null;
   currentAlbum?: string | null;
   recentlyPlayed: Track[];
-  newTracks: Track[];
+  randomTracks: Track[];
   artists: Artist[];
   playlists: Playlist[];
   userFavorites: string[];
@@ -45,7 +46,15 @@ function Cover({ track, className = "" }: { track: Track; className?: string }) 
 }
 
 // ─── Section heading with "View all" ─────────────────────────────────────────
-function SectionHeading({ title, href }: { title: string; href?: string }) {
+function SectionHeading({
+  title,
+  href,
+  action,
+}: {
+  title: string;
+  href?: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="flex items-baseline gap-3 mb-4">
       <h2 className="text-xl font-black" style={{ color: "var(--text-primary)" }}>
@@ -59,6 +68,7 @@ function SectionHeading({ title, href }: { title: string; href?: string }) {
           </svg>
         </Link>
       )}
+      {action && <div className="ml-auto self-center">{action}</div>}
     </div>
   );
 }
@@ -66,7 +76,7 @@ function SectionHeading({ title, href }: { title: string; href?: string }) {
 type CuratedHeroAndSongsProps = {
   tracks: Track[];
   recentlyPlayed: Track[];
-  newTracks: Track[];
+  randomTracks: Track[];
   userFavorites: string[];
   isLoggedIn: boolean;
 };
@@ -74,7 +84,7 @@ type CuratedHeroAndSongsProps = {
 function CuratedHeroAndSongs({
   tracks,
   recentlyPlayed,
-  newTracks,
+  randomTracks,
   userFavorites,
   isLoggedIn,
 }: CuratedHeroAndSongsProps) {
@@ -90,11 +100,13 @@ function CuratedHeroAndSongs({
   const recentBase = recentlyPlayed.length ? recentlyPlayed : tracks;
   const recentList = recentBase.filter((t) => t.id !== featured?.id).slice(0, 5);
 
-  // "Recently Added" when we actually have fresh tracks; otherwise a generic
-  // slice of the library (kept titled "Songs" so the heading stays honest).
-  const hasNew = newTracks.length > 0;
-  const songs = (hasNew ? newTracks : tracks).slice(0, 7);
-  const songsHeading = hasNew ? "Recently Added" : "Songs";
+  // Random picks, seeded by the server so the first render matches the HTML it
+  // sent (shuffling during render would hydrate differently than it rendered).
+  // The shuffle button then re-draws from the full library on the client, where
+  // Math.random is safe because it runs from an event, not a render.
+  const [picks, setPicks] = useState(randomTracks);
+  const songs = picks.slice(0, 7);
+  const reshuffle = () => setPicks(pickRandom(tracks, 12));
 
   const isFeaturedPlaying =
     !!featured && !!playerCurrent && playerCurrent.id === featured.id && isPlaying;
@@ -269,7 +281,24 @@ function CuratedHeroAndSongs({
       {/* ─── SONGS TABLE ─────────────────────────────────────────── */}
       {songs.length > 0 && (
         <section className="mb-12">
-          <SectionHeading title={songsHeading} href="/songs" />
+          <SectionHeading
+            title="Discover"
+            href="/songs"
+            action={
+              <button
+                onClick={reshuffle}
+                aria-label="Acak ulang"
+                title="Acak ulang"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all hover:opacity-80 active:scale-95"
+                style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z" />
+                </svg>
+                Acak
+              </button>
+            }
+          />
           {/* Column header */}
           <div
             className="hidden md:flex items-center gap-4 px-3 pb-2 mb-1 border-b text-[10px] font-bold tracking-wider uppercase"
@@ -363,7 +392,7 @@ export default function HomeContent({
   currentCategory,
   currentAlbum,
   recentlyPlayed,
-  newTracks,
+  randomTracks,
   artists,
   playlists,
   userFavorites,
@@ -436,7 +465,7 @@ export default function HomeContent({
           <CuratedHeroAndSongs
             tracks={tracks}
             recentlyPlayed={recentlyPlayed}
-            newTracks={newTracks}
+            randomTracks={randomTracks}
             userFavorites={userFavorites}
             isLoggedIn={isLoggedIn}
           />

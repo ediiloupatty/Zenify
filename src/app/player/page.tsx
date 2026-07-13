@@ -2,7 +2,8 @@ import Link from "next/link";
 import PlaylistSection from "@/components/PlaylistSection";
 import HomeContent from "@/components/HomeContent";
 import Sidebar from "@/components/Sidebar";
-import { getTracksByCategory, getTracksByAlbum, getRecentlyPlayed, getNewTracks, getUserFavorites, getArtists, getPlaylists, getPlaylistById, getPlaylistTracks, getTrackById, Track } from "@/lib/cloudflare";
+import { getTracksByCategory, getTracksByAlbum, getRecentlyPlayed, getUserFavorites, getArtists, getPlaylists, getPlaylistById, getPlaylistTracks, getTrackById, Track } from "@/lib/cloudflare";
+import { pickRandom } from "@/lib/pickRandom";
 import { auth, signOut } from "@/auth";
 import PlaylistDetail from "@/components/PlaylistDetail";
 import DynamicBackground from "@/components/DynamicBackground";
@@ -28,7 +29,7 @@ export default async function PlayerHome({
   const userEmail = session?.user?.email || null;
 
   // Run ALL independent fetches in parallel to avoid waterfall latency
-  const [autoPlayTrack, playlist, tracks, recentlyPlayed, newTracks, artists, playlists] =
+  const [autoPlayTrack, playlist, tracks, recentlyPlayed, artists, playlists] =
     await Promise.all([
       playTrackId ? getTrackById(playTrackId) : null,
       currentPlaylistId ? getPlaylistById(currentPlaylistId, userEmail) : null,
@@ -36,10 +37,15 @@ export default async function PlayerHome({
         ? getTracksByAlbum(currentAlbum)
         : getTracksByCategory(currentCategory),
       getRecentlyPlayed(userEmail, 9),
-      getNewTracks(12),
       getArtists(),
       getPlaylists(userEmail),
     ]);
+
+  // Home's song table used to be "Recently Added", which only ever changed when a
+  // song was uploaded — so for a library that isn't growing it was frozen. Random
+  // picks instead, drawn from the library we already fetched above (no extra
+  // query), reshuffled on every visit.
+  const randomTracks = pickRandom(tracks, 12);
 
   // These depend on results above, run in parallel where possible
   const [playlistTracks, userFavorites] = await Promise.all([
@@ -75,7 +81,7 @@ export default async function PlayerHome({
                 currentCategory={currentCategory}
                 currentAlbum={currentAlbum}
                 recentlyPlayed={recentlyPlayed}
-                newTracks={newTracks}
+                randomTracks={randomTracks}
                 artists={artists}
                 playlists={playlists}
                 userFavorites={userFavorites}
