@@ -6,7 +6,7 @@ import { cleanTitle } from "@/lib/cleanTitle";
 import { formatDuration } from "@/lib/utils";
 import CoverImage from "@/components/CoverImage";
 import type { Track } from "@/lib/cloudflare";
-import { formatAudioSpecs } from "@/lib/formatSpecs";
+import { describePlayback, isLosslessSource, audioFormat, formatKhz } from "@/lib/formatSpecs";
 import TrackDuration from "@/components/TrackDuration";
 
 function MiniCover({ track }: { track: Track }) {
@@ -27,11 +27,13 @@ function HiResDetail({ track, accent, coverColor }: {
   accent?: string; 
   coverColor?: { r: number; g: number; b: number }; 
 }) {
-  const specs = formatAudioSpecs(track);
+  const specs = describePlayback(track);
   if (!specs) return null;
 
-  const isHiRes = (track.bit_depth && track.bit_depth >= 24) ||
-    (track.sample_rate && track.sample_rate > 44100);
+  // A lossy file has no real bit depth, so it can't be hi-res no matter what
+  // the decoder reported at upload time — describePlayback already knows this.
+  const isHiRes = specs.hiRes;
+  const lossless = isLosslessSource(track);
 
   return (
     <div
@@ -57,7 +59,7 @@ function HiResDetail({ track, accent, coverColor }: {
         )}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        {track.bit_depth && (
+        {lossless && track.bit_depth && (
           <div className="rounded-lg px-2.5 py-2" style={{ background: "var(--bg-card-hover)" }}>
             <p className="text-[9px] font-bold uppercase tracking-wider mb-0.5" style={{ color: "var(--text-secondary)" }}>
               Bit Depth
@@ -73,17 +75,17 @@ function HiResDetail({ track, accent, coverColor }: {
               Sample Rate
             </p>
             <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-              {(track.sample_rate / 1000).toFixed(track.sample_rate % 1000 === 0 ? 0 : 1)} kHz
+              {formatKhz(track.sample_rate)} kHz
             </p>
           </div>
         )}
-        {track.file_url && (
+        {audioFormat(track.file_url) && (
           <div className="rounded-lg px-2.5 py-2" style={{ background: "var(--bg-card-hover)" }}>
             <p className="text-[9px] font-bold uppercase tracking-wider mb-0.5" style={{ color: "var(--text-secondary)" }}>
               Format
             </p>
             <p className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>
-              {track.file_url.includes(".flac") ? "FLAC" : track.file_url.includes(".wav") ? "WAV" : track.file_url.includes(".mp3") ? "MP3" : "Audio"}
+              {audioFormat(track.file_url)!.label}
             </p>
           </div>
         )}

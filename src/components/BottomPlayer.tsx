@@ -10,7 +10,7 @@ import { useCoverColor } from "@/lib/useCoverColor";
 import CoverImage from "@/components/CoverImage";
 import { cleanTitle } from "@/lib/cleanTitle";
 import { isRenderingActive, onRenderingActiveChange } from "@/lib/renderGate";
-import { formatAudioSpecs } from "@/lib/formatSpecs";
+import { formatAudioSpecs, describePlayback, isLosslessSource } from "@/lib/formatSpecs";
 import { useStreamQuality, withQuality, type StreamQuality } from "@/lib/useStreamQuality";
 import { saveDurationAction } from "@/app/admin/actions";
 import { toggleFavoriteAction, getFavoriteIdsAction } from "@/app/actions/favorites";
@@ -325,13 +325,11 @@ function TrackActions({
 // small popover to switch streaming quality (Lossless / 320 / 128 kbps) without
 // leaving the player. Mirrors the Settings > Playback control.
 function QualityBadgePicker({
-  bd,
-  srStr,
+  track,
   quality,
   onChange,
 }: {
-  bd: number;
-  srStr: string;
+  track: Track;
   quality: StreamQuality;
   onChange: (q: StreamQuality) => void;
 }) {
@@ -347,14 +345,25 @@ function QualityBadgePicker({
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
 
-  const badgeLeft = quality === "lossless" ? `${bd}-bit` : "MP3";
-  const badgeRight = quality === "lossless" ? `${srStr} kHz` : `${quality} kbps`;
+  const playing = describePlayback(track, quality);
+  const source = formatAudioSpecs(track, "lossless");
+  const lossless = isLosslessSource(track);
 
   const options: { value: StreamQuality; title: string; desc: string }[] = [
-    { value: "lossless", title: "Lossless", desc: `Original · ${bd}-bit ${srStr} kHz` },
+    {
+      value: "lossless",
+      // The original file is only "lossless" if it actually is one — an MP3 or
+      // AAC upload streams as-is, and calling that lossless would be a lie.
+      title: lossless ? "Lossless" : "Original",
+      desc: source ? `Original · ${source}` : "Original file",
+    },
     { value: "320", title: "High", desc: "MP3 320 kbps · much lighter" },
     { value: "128", title: "Data Saver", desc: "MP3 128 kbps · smoothest on slow networks" },
   ];
+
+  // Nothing verifiable to show, and no transcode selected — hide the badge
+  // rather than invent numbers.
+  if (!playing) return null;
 
   return (
     <div ref={ref} className="relative w-fit my-2">
@@ -367,10 +376,10 @@ function QualityBadgePicker({
       >
         <span className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-black tracking-wider text-white" style={{ background: "#0d9488" }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M11 3v18h2V3h-2zM7 7v10h2V7H7zm8 2v6h2V9h-2zM3 10v4h2v-4H3zm16 1v2h2v-2h-2z"/></svg>
-          <span>{badgeLeft}</span>
+          <span>{playing.left}</span>
         </span>
         <span className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-black tracking-wider text-white" style={{ background: "#4338ca" }}>
-          {badgeRight}
+          {playing.right}
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className={`transition-transform ${open ? "rotate-180" : ""}`}>
             <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
           </svg>
@@ -1620,9 +1629,9 @@ export default function BottomPlayer() {
     `radial-gradient(120% 75% at 50% -10%, rgba(${cc.r}, ${cc.g}, ${cc.b}, 0.42), transparent 55%),` +
     `linear-gradient(180deg, rgba(${cc.r}, ${cc.g}, ${cc.b}, 0.16) 0%, #0a0c11 62%)`;
 
-  const bd = currentTrack.bit_depth || (currentTrack.file_url?.endsWith(".flac") || currentTrack.file_url?.endsWith(".wav") ? 24 : 16);
-  const sr = currentTrack.sample_rate || (currentTrack.file_url?.endsWith(".wav") ? 96000 : currentTrack.file_url?.endsWith(".flac") ? 48000 : 44100);
-  const srStr = (sr / 1000).toFixed(sr % 1000 === 0 ? 0 : 1);
+  // The compact bar's badge follows barTrack, so during a crossfade it can't
+  // describe the incoming song while the bar still shows the outgoing one.
+  const barSpecs = formatAudioSpecs(barTrack, streamQuality);
 
   const nextTrack = upcoming[0]?.track;
   const nextRawUrl = nextTrack?.file_url || "";
@@ -1778,7 +1787,7 @@ export default function BottomPlayer() {
                 </p>
               )}
               {/* Quality badge — click to switch streaming quality */}
-              <QualityBadgePicker bd={bd} srStr={srStr} quality={streamQuality} onChange={setStreamQuality} />
+              <QualityBadgePicker track={currentTrack} quality={streamQuality} onChange={setStreamQuality} />
               {/* Clean Minimalist Actions */}
               <div className="mt-4">
                 <TrackActions
@@ -1825,7 +1834,7 @@ export default function BottomPlayer() {
                   </p>
                 )}
                 {/* Quality badge — click to switch streaming quality */}
-                <QualityBadgePicker bd={bd} srStr={srStr} quality={streamQuality} onChange={setStreamQuality} />
+                <QualityBadgePicker track={currentTrack} quality={streamQuality} onChange={setStreamQuality} />
                 {/* Clean Minimalist Actions */}
                 <div className="mt-3 mb-2">
                   <TrackActions
@@ -2271,10 +2280,11 @@ export default function BottomPlayer() {
 
           {/* Extra controls */}
           <div className="hidden md:flex items-center justify-end gap-4 w-1/3 order-2 md:order-3" onClick={e => e.stopPropagation()}>
-            {/* Hi-Res quality badge — kept separate from the title */}
-            {formatAudioSpecs(currentTrack) && (
+            {/* Quality badge — reflects the stream actually playing, so picking
+                320/128 in the picker retitles this too. */}
+            {barSpecs && (
               <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-extrabold bg-gradient-to-r from-teal-400 to-indigo-500 text-white tracking-wider border border-white/20 shadow-[0_0_10px_rgba(45,212,191,0.3)] flex-shrink-0">
-                {formatAudioSpecs(currentTrack)}
+                {barSpecs}
               </span>
             )}
             {/* Share: copy a deep link to this track */}
