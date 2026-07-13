@@ -8,9 +8,35 @@ package main
 const titlebarJS = `
 window.__ZENIFY_DESKTOP__ = true;
 
+// Latest now-playing snapshot, kept so the mini player can paint itself the
+// moment it opens instead of waiting for the next track change.
+window.__zenifyNP = null;
+
 window.addEventListener('zenify:nowplaying', function (e) {
+  window.__zenifyNP = e.detail;
   try { window.zenifyPresence(e.detail); } catch (_) {}
+  try { window.__zenifyRenderMini(); } catch (_) {}
 });
+
+// Single transport path for every control outside the page: hardware media keys,
+// the tray menu, and the mini player all end up here, clicking the player's own
+// buttons. Nothing re-implements playback, so nothing can drift out of sync.
+window.__zenifyClick = function (action) {
+  var map = {
+    'play-pause': '[aria-label="Play"],[aria-label="Pause"]',
+    'next':       '[aria-label="Next track"]',
+    'prev':       '[aria-label="Previous track"]',
+    'stop':       '[aria-label="Pause"]'
+  };
+  var sel = map[action];
+  if (!sel) return;
+  var btns = document.querySelectorAll(sel);
+  for (var i = 0; i < btns.length; i++) {
+    if (btns[i].offsetParent !== null) { btns[i].click(); return; }
+  }
+  // Fallback: click the first match even if the visibility check failed.
+  if (btns.length) btns[0].click();
+};
 
 // Reveal the (off-screen) window as soon as the document has painted its first
 // frame (the dark shell / loading skeleton) — NOT on 'load'. With streaming SSR
@@ -77,7 +103,12 @@ window.addEventListener('zenify:nowplaying', function (e) {
     // full-screen fixed overlays (e.g. the expanded player) — those must stay a
     // full 100vh so nothing leaks at the bottom; the title bar simply floats over
     // their top via its higher z-index.
-    style.textContent = 'body{padding-top:32px !important}.h-screen:not(.fixed){height:calc(100vh - 32px) !important}';
+    style.textContent = 'body{padding-top:32px !important}.h-screen:not(.fixed){height:calc(100vh - 32px) !important}' +
+      // Mini player: the page keeps running (and playing) underneath — it is just
+      // covered. Nothing is unmounted, so audio never even hiccups.
+      'html.zenify-mini body{padding-top:0 !important;overflow:hidden !important}' +
+      'html.zenify-mini #zenify-titlebar{display:none !important}' +
+      'html.zenify-mini #zenify-mini{display:flex !important}';
     document.head.appendChild(style);
 
     var bar = document.createElement('div');
@@ -127,17 +158,124 @@ window.addEventListener('zenify:nowplaying', function (e) {
     var ctr = document.createElement('div');
     ctr.style.cssText = 'display:flex;align-items:center;height:100%';
 
+    var miniSvg = '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.2" y="1.2" width="8.6" height="8.6" rx="1"/><rect x="4.6" y="5.6" width="5" height="4.2" rx="1" fill="currentColor" stroke="none"/></svg>';
     var minSvg = '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.2"><line x1="1" y1="6" x2="10" y2="6"/></svg>';
     var maxSvg = '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.2" y="1.2" width="8.6" height="8.6" rx="1"/></svg>';
     var clsSvg = '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.2"><line x1="1.5" y1="1.5" x2="9.5" y2="9.5"/><line x1="9.5" y1="1.5" x2="1.5" y2="9.5"/></svg>';
 
+    ctr.appendChild(mkbtn(miniSvg, 'rgba(255,255,255,.1)', function(){ call('winToggleMini'); }));
     ctr.appendChild(mkbtn(minSvg, 'rgba(255,255,255,.1)', function(){ call('winMinimize'); }));
     ctr.appendChild(mkbtn(maxSvg, 'rgba(255,255,255,.1)', function(){ call('winToggleMaximize'); }));
     ctr.appendChild(mkbtn(clsSvg, '#dc2626', function(){ call('winClose'); }));
 
     bar.appendChild(ctr);
     document.body.appendChild(bar);
+
+    injectMini();
+
+    // A reload while mini (e.g. a client-side navigation) drops the html class,
+    // but Go still has the window shrunk — ask it and re-apply.
+    try {
+      window.winIsMini().then(function (m) { if (m) window.__zenifyApplyMini(true); });
+    } catch (_) {}
   }
+
+  // ── Mini player ───────────────────────────────────────────────────────────
+  // A fixed overlay rather than a second window: webview_go owns exactly one
+  // window, and covering the page means playback (and all its state) is never
+  // torn down. Go shrinks the window to match; this draws what goes inside it.
+  function injectMini(){
+    if (!document.body || document.getElementById('zenify-mini')) return;
+
+    var m = document.createElement('div');
+    m.id = 'zenify-mini';
+    m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:none;align-items:center;gap:11px;padding:12px;background:#0a0c11;color:#e2e8f0;font-family:system-ui,Segoe UI,sans-serif;user-select:none;box-sizing:border-box';
+    m.onmousedown = function(){ call('winDragStart'); };
+
+    var cover = document.createElement('div');
+    cover.id = 'zenify-mini-cover';
+    cover.style.cssText = 'width:84px;height:84px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,#134e4a,#1e293b);background-size:cover;background-position:center;box-shadow:0 6px 18px rgba(0,0,0,.5)';
+
+    var col = document.createElement('div');
+    col.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:3px';
+
+    var title = document.createElement('div');
+    title.id = 'zenify-mini-title';
+    title.style.cssText = 'font-size:13px;font-weight:700;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    title.textContent = 'Zenify';
+
+    var artist = document.createElement('div');
+    artist.id = 'zenify-mini-artist';
+    artist.style.cssText = 'font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+
+    var ctrls = document.createElement('div');
+    ctrls.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px';
+
+    function tbtn(svg, fn, big){
+      var b = document.createElement('button');
+      var size = big ? 30 : 26;
+      b.style.cssText = 'width:' + size + 'px;height:' + size + 'px;display:flex;align-items:center;justify-content:center;border:0;border-radius:50%;cursor:default;color:' + (big ? '#042f2e' : '#cbd5e1') + ';background:' + (big ? '#14b8a6' : 'transparent') + ';transition:background .15s,color .15s;padding:0';
+      b.innerHTML = svg;
+      b.onmousedown = function(e){ e.stopPropagation(); };
+      b.onmouseenter = function(){ if (!big) { b.style.background = 'rgba(255,255,255,.1)'; b.style.color = '#fff'; } };
+      b.onmouseleave = function(){ if (!big) { b.style.background = 'transparent'; b.style.color = '#cbd5e1'; } };
+      b.onclick = function(e){ e.stopPropagation(); fn(); };
+      return b;
+    }
+
+    var prevSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>';
+    var nextSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>';
+
+    var play = tbtn('', function(){ window.__zenifyClick('play-pause'); }, true);
+    play.id = 'zenify-mini-play';
+
+    ctrls.appendChild(tbtn(prevSvg, function(){ window.__zenifyClick('prev'); }));
+    ctrls.appendChild(play);
+    ctrls.appendChild(tbtn(nextSvg, function(){ window.__zenifyClick('next'); }));
+
+    col.appendChild(title);
+    col.appendChild(artist);
+    col.appendChild(ctrls);
+
+    var expandSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+    var expand = document.createElement('button');
+    expand.style.cssText = 'position:absolute;top:8px;right:8px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;border-radius:6px;color:#64748b;cursor:default;padding:0';
+    expand.title = 'Kembali ke jendela penuh';
+    expand.innerHTML = expandSvg;
+    expand.onmousedown = function(e){ e.stopPropagation(); };
+    expand.onmouseenter = function(){ expand.style.background = 'rgba(255,255,255,.1)'; expand.style.color = '#fff'; };
+    expand.onmouseleave = function(){ expand.style.background = 'transparent'; expand.style.color = '#64748b'; };
+    expand.onclick = function(e){ e.stopPropagation(); call('winToggleMini'); };
+
+    m.appendChild(cover);
+    m.appendChild(col);
+    m.appendChild(expand);
+    document.body.appendChild(m);
+
+    window.__zenifyRenderMini();
+  }
+
+  var PLAY_SVG  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  var PAUSE_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
+
+  window.__zenifyRenderMini = function(){
+    var np = window.__zenifyNP;
+    var t = document.getElementById('zenify-mini-title');
+    var a = document.getElementById('zenify-mini-artist');
+    var c = document.getElementById('zenify-mini-cover');
+    var p = document.getElementById('zenify-mini-play');
+    if (!t || !a || !c || !p) return;
+
+    t.textContent = (np && np.title) ? np.title : 'Tidak ada lagu';
+    a.textContent = (np && np.artist) ? np.artist : '';
+    c.style.backgroundImage = (np && np.cover) ? 'url("' + np.cover + '")' : '';
+    p.innerHTML = (np && np.state === 'playing') ? PAUSE_SVG : PLAY_SVG;
+  };
+
+  window.__zenifyApplyMini = function(mini){
+    document.documentElement.classList.toggle('zenify-mini', !!mini);
+    if (mini) { injectMini(); window.__zenifyRenderMini(); }
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', inject);
@@ -180,24 +318,63 @@ window.addEventListener('zenify:nowplaying', function (e) {
   updatePage();
 })();
 
-// Forward hardware media-key events (Play/Pause, Next, Prev) to the player by
-// clicking the matching button in the DOM. The Go side captures WM_APPCOMMAND
-// and dispatches 'zenify:mediakey' CustomEvents with detail = action name.
+// Hardware media keys (Play/Pause, Next, Prev, Stop). The Go side captures
+// WM_APPCOMMAND and dispatches 'zenify:mediakey' with detail = action name.
 window.addEventListener('zenify:mediakey', function (e) {
-  var map = {
-    'play-pause': '[aria-label="Play"],[aria-label="Pause"]',
-    'next':       '[aria-label="Next track"]',
-    'prev':       '[aria-label="Previous track"]',
-    'stop':       '[aria-label="Pause"]'
-  };
-  var sel = map[e.detail];
-  if (!sel) return;
-  // Find a visible (non-hidden) button matching the selector.
-  var btns = document.querySelectorAll(sel);
-  for (var i = 0; i < btns.length; i++) {
-    if (btns[i].offsetParent !== null) { btns[i].click(); return; }
-  }
-  // Fallback: click the first match even if visibility check failed.
-  if (btns.length) btns[0].click();
+  window.__zenifyClick(e.detail);
 });
+
+// ── Native feel ─────────────────────────────────────────────────────────────
+// WebView2 is Chromium, so the page shows up wearing browser affordances that no
+// native app has: a "Reload / Save image as" context menu, blue text selection
+// across every label, ghost images when you drag a cover, rubber-band overscroll,
+// and fat default scrollbars. Stripping them is what actually makes the window
+// stop feeling like a web page — the UI being HTML is not what gives it away.
+//
+// Deliberately only in the desktop shell: the site in a real browser should keep
+// behaving like a site.
+(function nativeFeel(){
+  var css = document.createElement('style');
+  css.id = 'zenify-native-feel';
+  css.textContent =
+    // Text selection is for text fields, not for chrome.
+    '*{-webkit-user-select:none;user-select:none}' +
+    'input,textarea,[contenteditable="true"]{-webkit-user-select:text !important;user-select:text !important}' +
+    // No drag ghosts off covers and links.
+    'img,a{-webkit-user-drag:none;user-drag:none}' +
+    // No rubber-band / pull-to-refresh at the edges.
+    'html,body{overscroll-behavior:none !important}' +
+    // Slim, dark, app-style scrollbars.
+    '::-webkit-scrollbar{width:10px;height:10px}' +
+    '::-webkit-scrollbar-track{background:transparent}' +
+    '::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:6px;' +
+      'border:2px solid transparent;background-clip:content-box}' +
+    '::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.28);' +
+      'border:2px solid transparent;background-clip:content-box}' +
+    '::-webkit-scrollbar-corner{background:transparent}';
+  (document.head || document.documentElement).appendChild(css);
+
+  // Suppress the browser context menu everywhere except text fields, where
+  // cut/copy/paste is something native apps offer too.
+  document.addEventListener('contextmenu', function(e){
+    var t = e.target;
+    if (!t || !(t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+      e.preventDefault();
+    }
+  }, true);
+
+  document.addEventListener('dragstart', function(e){
+    var t = e.target;
+    if (t && (t.tagName === 'IMG' || t.tagName === 'A')) e.preventDefault();
+  }, true);
+
+  // Browser-only shortcuts that have no meaning in an app window. Reload
+  // (F5 / Ctrl+R) is deliberately left alone — Discord and Slack keep it too, and
+  // it is the one escape hatch when a page wedges.
+  document.addEventListener('keydown', function(e){
+    if (!e.ctrlKey) return;
+    var k = (e.key || '').toLowerCase();
+    if (k === 'p' || k === 's' || k === 'u' || k === 'f' || k === 'g') e.preventDefault();
+  }, true);
+})();
 `

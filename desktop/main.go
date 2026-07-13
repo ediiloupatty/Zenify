@@ -133,6 +133,12 @@ func main() {
 	hwnd := uintptr(w.Window())
 	decorateWindow(hwnd)
 
+	// System tray: hover tooltip, right-click transport menu, and a balloon on
+	// track change. Registered after decorateWindow so the subclassed wndProc is
+	// already in place to receive the icon's callback messages.
+	trayInit(hwnd)
+	defer trayRemove()
+
 	// Park the window off-screen so WebView2 renders the dark page without any
 	// visible flash; the injected script calls winReveal() once it has painted.
 	hideOffscreen(hwnd)
@@ -142,14 +148,34 @@ func main() {
 	w.Bind("winMinimize", func() { winMinimize(hwnd) })
 	w.Bind("winToggleMaximize", func() { winToggleMaximize(hwnd) })
 	w.Bind("winDragStart", func() { winDragStart(hwnd) })
+	// Closing a music player shouldn't kill the music. The window only hides; the
+	// tray menu's "Keluar" is the real exit.
 	w.Bind("winClose", func() {
 		saveWindowState(hwnd)
-		w.Terminate()
+		winHideToTray(hwnd)
 	})
+
+	// Swap between the full window and the compact always-on-top mini player,
+	// telling the page to swap its layout to match.
+	toggleMini := func() {
+		mini := "false"
+		if winToggleMini(hwnd) {
+			mini = "true"
+		}
+		w.Eval("try{window.__zenifyApplyMini(" + mini + ")}catch(_){}")
+	}
+	w.Bind("winToggleMini", func() { toggleMini() })
+	w.Bind("winIsMini", func() bool { return winIsMini() })
 
 	// Exposed to the page as window.zenifyPresence(detail). webview unmarshals the
 	// JS object argument straight into our struct. We hand off without blocking.
+	lastTrackID := ""
 	w.Bind("zenifyPresence", func(p presence) {
+		// Balloon only on a genuine track change, not on every play/pause toggle —
+		// otherwise pausing would spam a notification.
+		changed := p.ID != "" && p.ID != lastTrackID
+		lastTrackID = p.ID
+		trayUpdate(p, changed && p.State == "playing")
 		send(updates, p)
 	})
 
@@ -167,6 +193,28 @@ func main() {
 			a := action
 			w.Dispatch(func() {
 				w.Eval(`try{window.dispatchEvent(new CustomEvent('zenify:mediakey',{detail:'` + a + `'}))}catch(_){}`)
+			})
+		}
+	}()
+
+	// Tray menu commands that need the window or the webview. The tray's transport
+	// entries (play/pause, next, prev) don't come through here — they're pushed
+	// onto mediaKeyCh above, so they take the identical path to the hardware keys.
+	go func() {
+		for cmd := range trayCmdCh {
+			c := cmd
+			w.Dispatch(func() {
+				switch c {
+				case "show":
+					winShowFromTray(hwnd)
+				case "mini":
+					toggleMini()
+				case "quit":
+					quitting = true
+					saveWindowState(hwnd)
+					trayRemove()
+					w.Terminate()
+				}
 			})
 		}
 	}()
