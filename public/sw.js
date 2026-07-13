@@ -1,9 +1,23 @@
-// Zenify Service Worker — Audio Cache on Play
-// Caches audio files as they are played so they're available offline.
-// Only intercepts /api/audio/* and /api/local-audio/* requests.
+// Zenify Service Worker — offline support.
+//
+// Four caches, split by what the content actually is:
+//
+//   AUDIO / COVER — the media itself. Global content (a FLAC is the same file for
+//     every user), expensive to re-download, so it survives sign-out.
+//   SHELL — Next.js build output (/_next/static/**) and public assets. Content-
+//     hashed and immutable, never user-specific, so cache-first with no expiry.
+//   DATA — HTML documents, RSC payloads and /api GET responses. These DO contain
+//     the signed-in user's library, so they are wiped the moment anyone lands on
+//     /login (which is exactly where sign-out redirects to). Without that, the
+//     next person to sign in on this machine would be served the previous user's
+//     playlists out of cache.
 
 const AUDIO_CACHE = "zenify-audio-v1";
 const COVER_CACHE = "zenify-covers-v1";
+const SHELL_CACHE = "zenify-shell-v1";
+const DATA_CACHE = "zenify-data-v1";
+
+const CURRENT_CACHES = [AUDIO_CACHE, COVER_CACHE, SHELL_CACHE, DATA_CACHE];
 
 // Max cache size in bytes (2 GB default — adjustable)
 const MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -11,31 +25,139 @@ const MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
 // Patterns to cache
 const AUDIO_PATTERN = /^\/api\/(audio|local-audio)\//;
 const COVER_PATTERN = /^\/api\/cover\//;
+const SHELL_PATTERN = /^\/(_next\/static\/|covers\/|.*\.(png|svg|webp|ico|woff2?)$)/;
 
 // Install: activate immediately without waiting
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
-// Activate: claim all clients immediately
+// Activate: claim all clients and drop caches from older SW versions.
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      const names = await caches.keys();
+      await Promise.all(
+        names.filter((n) => n.startsWith("zenify-") && !CURRENT_CACHES.includes(n))
+             .map((n) => caches.delete(n))
+      );
+      await self.clients.claim();
+    })()
+  );
 });
 
-// Fetch: cache-first for audio and covers, network-first for everything else
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
+  const request = event.request;
+  const url = new URL(request.url);
 
-  // Only handle same-origin requests
+  // Only handle same-origin requests.
   if (url.origin !== self.location.origin) return;
 
+  // Never touch writes. Server actions (favorites, playlists, sign-in) are POSTs
+  // and must always hit the network — caching or replaying them would be wrong.
+  if (request.method !== "GET") return;
+
   if (AUDIO_PATTERN.test(url.pathname)) {
-    event.respondWith(handleAudioRequest(event.request));
+    event.respondWith(handleAudioRequest(request));
   } else if (COVER_PATTERN.test(url.pathname)) {
-    event.respondWith(handleCoverRequest(event.request));
+    event.respondWith(handleCoverRequest(request));
+  } else if (SHELL_PATTERN.test(url.pathname)) {
+    event.respondWith(cacheFirst(SHELL_CACHE, request));
+  } else if (request.mode === "navigate") {
+    event.respondWith(handleNavigation(request, url));
+  } else {
+    // /api GETs and Next.js RSC payloads (?_rsc=) for client-side navigation.
+    event.respondWith(networkFirst(DATA_CACHE, request));
   }
-  // Everything else falls through to the network (default browser behavior)
 });
+
+// Store a navigation response for offline use.
+//
+// The Cache API flatly refuses any Response whose `redirected` flag is set, and
+// cache.put() rejects — silently, since nothing awaits it. That bites here because
+// a signed-out visit to /player redirects to /login, so the page you most need
+// offline is exactly the one that fails to store. Rebuilding the Response from its
+// body clears the flag, and we key it by the URL we actually landed on.
+async function cacheDocument(cache, request, response) {
+  try {
+    if (!response.redirected) {
+      await cache.put(request, response.clone());
+      return;
+    }
+    const clean = new Response(response.clone().body, {
+      status: 200,
+      statusText: "OK",
+      headers: response.headers,
+    });
+    await cache.put(response.url, clean);
+  } catch {
+    // A page we can't cache is not a page we should fail on.
+  }
+}
+
+// Immutable, content-hashed build output: if it's cached, it's correct.
+async function cacheFirst(cacheName, request) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(request);
+    if (response.ok) cache.put(request, response.clone()).catch(() => {});
+    return response;
+  } catch {
+    return new Response("", { status: 504, statusText: "Offline" });
+  }
+}
+
+// Fresh when we can, cached when we can't. Never serve stale data to someone who
+// actually has a connection.
+async function networkFirst(cacheName, request) {
+  const cache = await caches.open(cacheName);
+  try {
+    const response = await fetch(request);
+    if (response.ok) cache.put(request, response.clone()).catch(() => {});
+    return response;
+  } catch {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    return new Response(JSON.stringify({ offline: true }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+}
+
+async function handleNavigation(request, url) {
+  // Reaching /login means the previous session is over (sign-out redirects here).
+  // Drop every user-specific response before the next person signs in.
+  if (url.pathname === "/login") {
+    await caches.delete(DATA_CACHE);
+  }
+
+  const cache = await caches.open(DATA_CACHE);
+  try {
+    const response = await fetch(request);
+    if (response.ok) await cacheDocument(cache, request, response);
+    return response;
+  } catch {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+
+    // Last resort: any page shell we do have, else a plain message.
+    const fallback = (await cache.match("/player")) || (await cache.match("/"));
+    if (fallback) return fallback;
+    return new Response(
+      "<!doctype html><meta charset=utf-8><title>Zenify — Offline</title>" +
+        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;' +
+        'background:#0a0c11;color:#94a3b8;font-family:system-ui,sans-serif;text-align:center">' +
+        "<div><h1 style=\"color:#f8fafc;font-size:20px;margin:0 0 8px\">Kamu sedang offline</h1>" +
+        "<p style=\"margin:0;font-size:14px\">Buka Zenify sekali saat online, lalu halaman dan lagu yang " +
+        "sudah kamu putar bisa diakses tanpa internet.</p></div>",
+      { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
+    );
+  }
+}
 
 // Full-file downloads currently in flight, keyed by song URL. Without this, a
 // slow connection used to spawn a brand-new full download on EVERY range-request
