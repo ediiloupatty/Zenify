@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from "react";
 import { Track } from "@/lib/cloudflare";
 import { cleanTitle } from "@/lib/cleanTitle";
+import { healTrackYear } from "@/lib/trackYear";
 
 const STORAGE_KEY_QUEUE = "zenify_queue";
 const STORAGE_KEY_STATE = "zenify_state";
@@ -241,7 +242,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const state = sRaw ? JSON.parse(sRaw) : (legRaw ? JSON.parse(legRaw) : null);
       if (!queue || !Array.isArray(queue.tracks) || queue.tracks.length === 0) return;
 
-      const n = queue.tracks.length;
+      // A saved queue is a snapshot of what the database served at the time, so it
+      // can still carry a year the server now filters out (see lib/trackYear) — it
+      // would survive every reload until the user replaced the queue.
+      const saved = (queue.tracks as Track[]).map(healTrackYear);
+      const n = saved.length;
 
       const order =
         Array.isArray(queue.playOrder) && queue.playOrder.length === n
@@ -260,9 +265,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // Heal queues saved before dedup shipped: if the restored list still holds
       // duplicates, clean it and rebuild a fresh order anchored on whatever was
       // playing, so the "up next" list doesn't show the same song repeatedly.
-      const cleaned = dedupeTracks(queue.tracks as Track[]);
+      const cleaned = dedupeTracks(saved);
       if (cleaned.length !== n) {
-        const currentId = (queue.tracks as Track[])[order[pos]]?.id;
+        const currentId = saved[order[pos]]?.id;
         const anchor = Math.max(0, currentId ? cleaned.findIndex((t) => t.id === currentId) : 0);
         const wasShuffled = state?.shuffle === true;
         setTracks(cleaned);
@@ -281,7 +286,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      setTracks(queue.tracks);
+      setTracks(saved);
       setPlayOrder(order);
       setPosition(pos);
 
