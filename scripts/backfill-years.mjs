@@ -42,21 +42,42 @@ const s3 = new S3Client({
   credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
 });
 
-async function d1(sql, params = []) {
-  const res = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${D1_DATABASE_ID}/query`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${CLOUDFLARE_API_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ sql, params }),
+// This run makes thousands of round trips, so a single transient timeout must not
+// take the whole thing down — losing 2000 recovered years to one flaky connection
+// would be absurd. Re-running is safe regardless: the query below only selects
+// rows that still have an implausible year, so anything already fixed is skipped.
+async function withRetry(label, fn, attempts = 4) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      // A missing object is an answer, not a hiccup — retrying it just wastes time.
+      if (err.name === "NoSuchKey" || /does not exist/i.test(err.message)) throw err;
+      if (i >= attempts) throw err;
+      const backoff = 500 * 2 ** (i - 1);
+      console.warn(`  ~ ${label} failed (${err.message}); retry ${i}/${attempts - 1} in ${backoff}ms`);
+      await new Promise((r) => setTimeout(r, backoff));
     }
-  );
-  const json = await res.json();
-  if (!json.success) throw new Error(JSON.stringify(json.errors));
-  return json.result[0].results;
+  }
+}
+
+async function d1(sql, params = []) {
+  return withRetry("d1", async () => {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${D1_DATABASE_ID}/query`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${CLOUDFLARE_API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sql, params }),
+      }
+    );
+    const json = await res.json();
+    if (!json.success) throw new Error(JSON.stringify(json.errors));
+    return json.result[0].results;
+  });
 }
 
 // tracks.file_url is the public R2 URL; the object key is everything after the host.
@@ -69,14 +90,16 @@ function keyFromUrl(fileUrl) {
 }
 
 async function readYear(key) {
-  const res = await s3.send(
-    new GetObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: key,
-      Range: `bytes=0-${HEAD_BYTES - 1}`,
-    })
-  );
-  const buf = Buffer.from(await res.Body.transformToByteArray());
+  const buf = await withRetry("r2", async () => {
+    const res = await s3.send(
+      new GetObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: key,
+        Range: `bytes=0-${HEAD_BYTES - 1}`,
+      })
+    );
+    return Buffer.from(await res.Body.transformToByteArray());
+  });
 
   // The buffer is a deliberately truncated file, so the parser will complain that
   // the stream ended early — after it has already read the metadata blocks it
