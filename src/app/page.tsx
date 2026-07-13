@@ -2,6 +2,107 @@ import Link from "next/link";
 import Image from "next/image";
 import { auth } from "@/auth";
 
+const FEATURE_GROUPS: { title: string; items: string[] }[] = [
+  {
+    title: "Playback",
+    items: [
+      "A full-screen player, a compact bottom bar, and a queue you can drag to reorder",
+      "Smart shuffle that weights the next song by genre, mood and how much you play it",
+      "Artist cooldown, genre spread and recency decay, so a shuffle never turns monotonous",
+      "Crossfade between every track, always on",
+      "Repeat off / all / one, and a Previous button that walks real history",
+      "A live audio visualizer driven by the Web Audio API",
+      "Sleep timer — 15, 30, 45, 60 minutes, or stop at the end of the track",
+      "Volume, queue and position survive a reload",
+      "Share any song as a link that opens Zenify and plays it",
+      "Cover art tints the player with its own dominant colour",
+      "Duplicates are collapsed out of the queue automatically",
+    ],
+  },
+  {
+    title: "Lyrics",
+    items: [
+      "Time-synced lyrics that scroll line by line",
+      "Matched automatically, and guarded by duration so you never get another song's words",
+      "Nudge the offset when a file runs early or late",
+      "Plain lyrics as a fallback when no synced version exists",
+    ],
+  },
+  {
+    title: "Audio Quality",
+    items: [
+      "Lossless FLAC, WAV and AIFF played straight through, with no re-encoding",
+      "Choose your stream: lossless, 320 kbps or 128 kbps",
+      "A Hi-Res badge showing the real bit depth and sample rate",
+      "The badge never lies — stream a transcode and it says so",
+    ],
+  },
+  {
+    title: "Library & Discovery",
+    items: [
+      "Browse by song, album or artist",
+      "Artist pages with a photo, bio, popular tracks and full discography",
+      "Daily Mixes built from what you actually listen to",
+      "Favorites, recently played, and play counts",
+      "Playlists — create them, add to them, move tracks between them, delete them",
+      "Instant fuzzy search across the whole library",
+      "AI search: describe a mood in plain language and get songs back",
+    ],
+  },
+  {
+    title: "Offline & PWA",
+    items: [
+      "Install it as an app — no store, no wrapper",
+      "Songs and covers you play are cached for offline listening, up to 2 GB",
+      "See exactly what is cached, and clear it in one tap",
+      "Keeps playing when the network drops",
+    ],
+  },
+  {
+    title: "Account & Privacy",
+    items: [
+      "Email sign-up and login, with hashed passwords",
+      "Your favorites, playlists and history belong to your account alone",
+      "Edit your profile and change your password",
+      "Delete your account, and everything in it, for real",
+    ],
+  },
+  {
+    title: "Performance & Feel",
+    items: [
+      "Lite mode drops the heavy glass blur automatically on weaker machines",
+      "A reduced-motion toggle for when animation is too much",
+      "Skeleton loading everywhere, and long lists render incrementally",
+      "Sidebar on desktop, bottom navigation on mobile",
+    ],
+  },
+  {
+    title: "Windows Desktop App",
+    items: [
+      "A native shell (Go + WebView2) wrapped around the same player",
+      "Discord Rich Presence — “Listening to Zenify”, with cover art and a live progress bar",
+      "Hardware media keys for play, pause and skip",
+      "A system tray icon: closing the window only hides it, the music keeps going",
+      "Taskbar thumbnail controls and a play/pause badge on the icon",
+      "A mini player — a 360×132 card that stays on top",
+      "Track-change notifications while the window is in the background",
+      "Starts with Windows, runs as a single instance, ships as a one-click installer",
+    ],
+  },
+  {
+    title: "Admin & Library Tools",
+    items: [
+      "Drag a whole folder in to upload — tags, covers and durations are read for you",
+      "Edit any track's metadata, or delete it from storage and database at once",
+      "Set album covers, artist photos and artist bios by hand",
+      "Backfill missing covers from iTunes and Deezer, and artist photos from Deezer",
+      "Read bit depth and sample rate back out of the files to feed the Hi-Res badge",
+      "Compress every stored cover, and re-clean messy filenames in bulk",
+      "A Go uploader CLI for bulk imports, with de-duplication and retries",
+    ],
+  },
+];
+
 export default async function LandingPage() {
   const session = await auth();
   const isLoggedIn = !!session?.user;
@@ -108,35 +209,35 @@ export default async function LandingPage() {
         <div className="w-full border-t border-slate-700/50 my-12" />
       </div>
 
-      {/* ─── FEATURES GRID ─────────────────────────────────────── */}
-      <section id="features" className="relative z-10 max-w-[1400px] mx-auto px-8 md:px-16 pb-28 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-12 w-full">
-        <div className="flex flex-col">
-          <span className="text-base font-bold text-[#14b8a6] mb-2 font-mono">01</span>
-          <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Synced Lyrics</h3>
-          <p className="text-slate-400 text-sm leading-relaxed font-normal">
-            Time-synced lyrics that scroll line by line, matched automatically to every track.
+      {/* ─── FEATURES ──────────────────────────────────────────── */}
+      <section id="features" className="relative z-10 max-w-[1400px] mx-auto px-8 md:px-16 pb-28 w-full">
+        <div className="max-w-2xl mb-16">
+          <p className="text-sm font-semibold text-slate-400 mb-5 tracking-wide uppercase">
+            Everything inside
           </p>
+          <h2 className="text-4xl sm:text-5xl font-light tracking-tight leading-tight">
+            <span className="text-white">Every feature, </span>
+            <span className="text-[#14b8a6]">nothing hidden.</span>
+          </h2>
         </div>
-        <div className="flex flex-col">
-          <span className="text-base font-bold text-[#14b8a6] mb-2 font-mono">02</span>
-          <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Lossless Audio</h3>
-          <p className="text-slate-400 text-sm leading-relaxed font-normal">
-            Full-quality FLAC and WAV playback, no re-encoding, no quality loss.
-          </p>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-base font-bold text-[#14b8a6] mb-2 font-mono">03</span>
-          <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Daily Mix</h3>
-          <p className="text-slate-400 text-sm leading-relaxed font-normal">
-            Personalized mixes that adapt to what you actually listen to.
-          </p>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-base font-bold text-[#14b8a6] mb-2 font-mono">04</span>
-          <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Play Anywhere</h3>
-          <p className="text-slate-400 text-sm leading-relaxed font-normal">
-            Use the desktop app, or open the same player right in your browser.
-          </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-14">
+          {FEATURE_GROUPS.map((group, i) => (
+            <div key={group.title} className="flex flex-col">
+              <span className="text-base font-bold text-[#14b8a6] mb-2 font-mono">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <h3 className="text-xl font-bold text-white mb-4 tracking-tight">{group.title}</h3>
+              <ul className="flex flex-col gap-2.5">
+                {group.items.map((item) => (
+                  <li key={item} className="flex gap-3 text-slate-400 text-sm leading-relaxed">
+                    <span aria-hidden="true" className="text-[#14b8a6]/60 select-none">—</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       </section>
 
