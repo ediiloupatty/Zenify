@@ -1,11 +1,33 @@
 # Zenify Desktop
 
-Native shell (Go + WebView2) that wraps the online Zenify web app and shows
-**Discord Rich Presence** ("Listening to Zenify" + song / artist / cover / progress).
-This is impossible from a browser tab — Discord presence needs the local IPC
-socket, which only a native process can reach.
+Native shell (Go + WebView2) that wraps the online Zenify web app and adds the
+things a browser tab simply cannot do:
+
+| Feature                    | Why it needs a native process                                          |
+| -------------------------- | --------------------------------------------------------------------- |
+| **Discord Rich Presence**  | Needs Discord's local IPC socket.                                      |
+| **Hardware media keys**    | `WM_APPCOMMAND` only reaches a real window.                           |
+| **System tray**            | `Shell_NotifyIcon` — closing the window keeps the music playing.       |
+| **Track-change balloons**  | Native notification-area toast, only when the window is in background. |
+| **Mini player**            | A 360×132 always-on-top window; no browser can resize itself like that.|
 
 See [`PLAN.md`](./PLAN.md) for the architecture.
+
+## Tray, mini player & media keys
+
+The tray icon is the app's real home. **Closing the window only hides it** — audio
+keeps playing, and "Keluar" in the tray menu is the only true exit. Left-click the
+icon to bring the window back; right-click for Putar/Jeda, next, previous, mini
+player, and quit.
+
+The **mini player** (title-bar button, or the tray menu) shrinks the window to a
+compact always-on-top card in the bottom-right corner. It is an injected overlay
+on top of the *same* page, not a second window — so playback is never torn down
+and nothing has to be kept in sync.
+
+Every control outside the page — media keys, tray menu, mini player buttons —
+funnels through one JS helper (`window.__zenifyClick`) that clicks the player's own
+buttons. There is no second playback implementation to drift out of sync.
 
 ## Prerequisites (Windows)
 
@@ -64,8 +86,19 @@ go build -ldflags="-H windowsgui" -o zenify-desktop.exe .
 The web app dispatches `CustomEvent('zenify:nowplaying', {detail})` on every
 track / play-pause change (in `src/components/BottomPlayer.tsx`). In a browser
 that event is harmless and unheard. Here, an injected init-script forwards the
-detail to the Go-bound `window.zenifyPresence(...)`, which updates Discord. No
-localhost server, no web↔desktop coupling beyond that one event.
+detail to the Go-bound `window.zenifyPresence(...)`, which updates Discord, the
+tray tooltip, the balloon, and the mini player. No localhost server, no web↔desktop
+coupling beyond that one event.
+
+Going the other way, Go pushes commands into the page:
+
+| Go → page                                | Trigger                          |
+| ---------------------------------------- | -------------------------------- |
+| `CustomEvent('zenify:mediakey', action)` | Hardware media key, tray menu     |
+| `window.__zenifyApplyMini(bool)`         | Mini player toggled              |
+
+**The web app needs no changes for any of this** — the shell injects its own
+title bar and mini player over the unmodified deployed site.
 
 ## Security
 

@@ -205,14 +205,46 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 			action = "stop"
 		}
 		if action != "" {
-			select {
-			case mediaKeyCh <- action:
-			default:
-			}
+			sendMediaKey(action)
 			return 1 // handled
 		}
+
+	case wmTrayIcon:
+		switch lparam {
+		case wmRButtonUp:
+			showTrayMenu(hwnd)
+			return 0
+		case wmLButtonUp, wmLButtonDblClk:
+			winShowFromTray(hwnd)
+			return 0
+		}
+
+	case wmGetMinMaxInfo:
+		// webview's own proc clamps the window to its 520x400 minimum, which would
+		// block the mini player. While mini, answer this ourselves and skip it.
+		//
+		// `go vet` flags the lparam conversion below as a possible unsafe.Pointer
+		// misuse. Its rule exists because a uintptr holding a *Go* address can go
+		// stale when the GC moves the object. This one is a MINMAXINFO the kernel
+		// allocated and handed us; it is not Go memory, it cannot be moved, and it
+		// stays valid for the duration of this message. This is the only way to
+		// answer WM_GETMINMAXINFO, and it is the idiom every Win32 Go binding uses.
+		if isMini {
+			mmi := (*minMaxInfo)(unsafe.Pointer(lparam)) //nolint:govet // OS-owned struct, see above
+			dpi := getDPI(hwnd)
+			mmi.PtMinTrackSize.X = miniW * dpi / 96
+			mmi.PtMinTrackSize.Y = miniH * dpi / 96
+			return 0
+		}
+
 	case wmClose:
 		saveWindowState(hwnd)
+		// Closing a music player shouldn't kill playback. Hide to the tray instead;
+		// only "Keluar" in the tray menu (which sets quitting) really exits.
+		if trayActive && !quitting {
+			winHideToTray(hwnd)
+			return 0
+		}
 	}
 	r, _, _ := pCallWindowProc.Call(origWndProc, hwnd, msg, wparam, lparam)
 	return r
