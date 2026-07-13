@@ -15,6 +15,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -323,7 +325,50 @@ func readTags(p string) (title, artist, album, genre string, year int, ok bool) 
 	if err != nil {
 		return "", "", "", "", 0, false
 	}
-	return m.Title(), m.Artist(), m.Album(), m.Genre(), m.Year(), true
+	return m.Title(), m.Artist(), m.Album(), m.Genre(), yearFrom(m), true
+}
+
+// yearFrom recovers a release year that tag.Metadata.Year() cannot be trusted to
+// give us.
+//
+// For Vorbis/FLAC, dhowden/tag switches on the *length* of the date comment and
+// only knows 4 ("2006"), 7 ("2006-01") and 10 ("2006-01-02"). Any other shape —
+// an ISO timestamp like "2021-05-14T00:00:00Z", or "14/05/2021" — leaves the
+// layout string empty, so time.Parse fails, the error is thrown away with `_`,
+// and it returns the zero time's year: 1. That is exactly how 2805 tracks in this
+// library ended up filed under the year 1.
+//
+// So trust Year() only when the answer is plausible, and otherwise pull the first
+// four-digit run out of the raw comment ourselves.
+func yearFrom(m tag.Metadata) int {
+	if y := m.Year(); plausibleYear(y) {
+		return y
+	}
+	raw := m.Raw()
+	for _, key := range []string{"date", "year", "originaldate", "originalyear"} {
+		if s, ok := raw[key].(string); ok {
+			if y, ok := firstYearIn(s); ok {
+				return y
+			}
+		}
+	}
+	return 0 // unknown — nullYear turns this into a NULL, not a lie
+}
+
+var fourDigits = regexp.MustCompile(`\d{4}`)
+
+func firstYearIn(s string) (int, bool) {
+	for _, match := range fourDigits.FindAllString(s, -1) {
+		y, err := strconv.Atoi(match)
+		if err == nil && plausibleYear(y) {
+			return y, true
+		}
+	}
+	return 0, false
+}
+
+func plausibleYear(y int) bool {
+	return y >= 1900 && y <= time.Now().Year()+1
 }
 
 func contentTypeFor(ext string) string {
@@ -545,8 +590,10 @@ func nullStr(s string) interface{} {
 	return s
 }
 
+// nullYear keeps anything we can't vouch for out of the database. `y <= 0` was
+// too weak a guard: the value that actually got through was 1.
 func nullYear(y int) interface{} {
-	if y <= 0 {
+	if !plausibleYear(y) {
 		return nil
 	}
 	return y
