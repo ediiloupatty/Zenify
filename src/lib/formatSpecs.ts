@@ -12,6 +12,9 @@ export type PlaybackSpecs = {
   left: string; // bit depth, or the codec name when bit depth is meaningless
   right: string; // sample rate, or the bitrate when streaming a transcode
   hiRes: boolean;
+  // The codec actually being decoded — which is NOT always the source file's:
+  // streaming at 320/128 kbps decodes an MP3 even when the file on R2 is FLAC.
+  codec: string | null;
 };
 
 const CONTAINERS: { re: RegExp; label: string; lossy: boolean }[] = [
@@ -44,7 +47,7 @@ export function describePlayback(
   // Streaming a transcoded variant: we are decoding an MP3, so the source
   // file's bit depth and sample rate describe nothing the listener can hear.
   if (quality !== "lossless") {
-    return { left: "MP3", right: `${quality} kbps`, hiRes: false };
+    return { left: "MP3", right: `${quality} kbps`, hiRes: false, codec: "MP3" };
   }
 
   const fmt = audioFormat(track.file_url);
@@ -55,7 +58,7 @@ export function describePlayback(
   // in the DB tagged "16-bit". Label them by codec instead of dressing a lossy
   // file up as CD-quality.
   if (fmt?.lossy) {
-    return { left: fmt.label, right: rate ?? "Lossy", hiRes: false };
+    return { left: fmt.label, right: rate ?? "Lossy", hiRes: false, codec: fmt.label };
   }
 
   if (track.bit_depth && track.sample_rate) {
@@ -63,16 +66,44 @@ export function describePlayback(
       left: `${track.bit_depth}-bit`,
       right: rate!,
       hiRes: track.bit_depth >= 24 || track.sample_rate > 44100,
+      codec: fmt?.label ?? null,
     };
   }
 
   // Lossless container whose specs were never backfilled. Name the format we
   // can prove from the file, and leave the numbers out.
   if (fmt) {
-    return { left: fmt.label, right: rate ?? "Lossless", hiRes: false };
+    return { left: fmt.label, right: rate ?? "Lossless", hiRes: false, codec: fmt.label };
   }
 
   return null;
+}
+
+// A single line naming both the codec and its numbers, for surfaces outside the
+// player that get one line and no room for a two-tone badge — currently Discord
+// Rich Presence:
+//
+//   FLAC · 16-bit 44.1 kHz     lossless stream of a FLAC
+//   MP3 · 128 kbps             streaming a transcoded variant
+//   AAC · 48 kHz               a lossy source file, played as-is
+//
+// Same rule as everywhere else: this describes what is being decoded, not what
+// happens to sit in the bucket. Streaming at 128 kbps says so.
+export function formatQualityLine(
+  track: Pick<Track, "file_url" | "bit_depth" | "sample_rate">,
+  quality: StreamQuality = "lossless"
+): string | null {
+  const specs = describePlayback(track, quality);
+  if (!specs) return null;
+
+  // When the badge's left half is already the codec ("MP3 128 kbps"), don't
+  // repeat it — that would read "MP3 · MP3 128 kbps".
+  if (specs.codec && specs.codec === specs.left) {
+    return `${specs.left} · ${specs.right}`;
+  }
+  return specs.codec
+    ? `${specs.codec} · ${specs.left} ${specs.right}`
+    : `${specs.left} ${specs.right}`;
 }
 
 export function isLosslessSource(track: Pick<Track, "file_url">): boolean {

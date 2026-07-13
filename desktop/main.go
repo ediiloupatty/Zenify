@@ -30,13 +30,14 @@ import (
 // (unlike a Client Secret / Bot Token, neither of which RPC needs).
 const discordAppID = "1520363130478133369"
 
-// Art-asset keys uploaded in the Discord Developer Portal (Rich Presence → Art
-// Assets). These are referenced by name, not by URL.
-const (
-	assetLogo    = "zenify_logo" // large image / fallback cover
-	assetPlaying = "playing"     // small badge while playing
-	assetPaused  = "paused"      // small badge while paused
-)
+// Art-asset key uploaded in the Discord Developer Portal (Rich Presence → Art
+// Assets). Referenced by name, not by URL.
+//
+// There is deliberately no small "playing"/"paused" badge: Discord already stops
+// the progress bar when we drop the timestamps on pause, so the badge only
+// restated what the card was showing anyway — and it required uploading two more
+// art assets by hand to work at all.
+const assetLogo = "zenify_logo" // large image / fallback cover
 
 // Discord activity types. The default RPC activity is 0 ("Playing", rendered as
 // a game); 2 is "Listening", which Discord renders as "Listening to Zenify" with
@@ -83,6 +84,7 @@ type presence struct {
 	Title    string  `json:"title"`
 	Artist   string  `json:"artist"`
 	Album    string  `json:"album"`
+	Quality  string  `json:"quality"`  // "FLAC · 16-bit 44.1 kHz" / "MP3 · 128 kbps"
 	Cover    string  `json:"cover"`    // absolute https URL, may be empty
 	State    string  `json:"state"`    // "playing" | "paused" | "stopped"
 	Position float64 `json:"position"` // seconds into the track
@@ -291,12 +293,18 @@ func buildActivity(p presence) *dcActivity {
 		}
 	}
 
+	// Discord renders a Listening card as three lines: details, state, then
+	// large_text. That third line used to carry the album — which for 207 of the
+	// library's tracks IS the title (they're singles), so the card spent a whole
+	// line repeating itself. Genre is empty for every track and `year` is 1 for
+	// most of them, so neither can fill it. The audio quality can: it's populated
+	// for nearly every track, and it's the one thing Spotify's card cannot say.
 	act := &dcActivity{
 		Type:    activityTypeListening,
 		Details: clamp(p.Title),
 		Assets: dcAssets{
 			LargeImage: large,
-			LargeText:  clamp(p.Album),
+			LargeText:  clamp(p.Quality),
 		},
 	}
 	if p.Artist != "" {
@@ -305,8 +313,6 @@ func buildActivity(p presence) *dcActivity {
 
 	switch p.State {
 	case "playing":
-		act.Assets.SmallImage = assetPlaying
-		act.Assets.SmallText = "Playing"
 		// Start = now - position gives Discord an "elapsed" timer; adding End makes
 		// it a countdown with a progress bar (in milliseconds, per the RPC spec).
 		now := time.Now()
@@ -318,8 +324,7 @@ func buildActivity(p presence) *dcActivity {
 			act.Timestamps.End = &endMs
 		}
 	case "paused":
-		act.Assets.SmallImage = assetPaused
-		act.Assets.SmallText = "Paused"
+		// No timestamps: Discord freezes the progress bar, which is the pause cue.
 	default: // "stopped" / empty — idle
 		if act.Details == "" {
 			act.Details = "Idle"
