@@ -336,9 +336,28 @@ function toProxyUrl(url: string | null | undefined, kind: "audio" | "cover"): st
   if (kind === "cover" && R2_CDN_BASE) return `${R2_CDN_BASE}/${path}`;
   return `/api/${kind}/${path}`;
 }
+// 2805 of the library's rows carry `year = 1`, and the UI rendered it literally
+// ("The Life of a Showgirl · 1"). The Go uploader got it from dhowden/tag, whose
+// Vorbis Year() only knows date strings of length 4, 7 or 10; anything else (an
+// ISO timestamp, say) leaves the format empty, time.Parse fails, the error is
+// discarded, and it returns the zero time's year — which is 1.
+//
+// The uploader now rejects those, but the rows already in D1 outlive that fix,
+// and any tagger can produce a new one. Filtering here — the single gate every
+// track passes through on its way out of the database — means no render site has
+// to remember to guard, and a seventh one can't reintroduce the bug.
+function plausibleYear(year: unknown): number | undefined {
+  const n = typeof year === "number" ? year : Number(year);
+  if (!Number.isInteger(n) || n < 1900 || n > new Date().getFullYear() + 1) {
+    return undefined;
+  }
+  return n;
+}
+
 function normalizeTrack(t: any): Track {
   return {
     ...t,
+    year: plausibleYear(t.year),
     file_url: toProxyUrl(t.file_url, "audio") ?? t.file_url,
     cover_url: toProxyUrl(t.cover_url, "cover"),
   };
