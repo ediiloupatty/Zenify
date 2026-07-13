@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -101,15 +102,26 @@ type presence struct {
 var defaultURL = "http://localhost:3000"
 
 func main() {
-	url := flag.String("url", envOr("ZENIFY_URL", defaultURL),
+	// Named appURL, not url: a variable called `url` would shadow the net/url
+	// package that playerURL below relies on.
+	appURL := flag.String("url", envOr("ZENIFY_URL", defaultURL),
 		"URL of the online Zenify web app to load")
 
 	debug := flag.Bool("debug", false, "open the webview devtools")
+	logPresence := flag.Bool("log-presence", false,
+		"log every Discord activity frame to stdout (kept separate from -debug: opening "+
+			"devtools changes how the page behaves, which is exactly what you don't want "+
+			"while diagnosing what the page reported)")
 	flag.Parse()
 
 	if !checkEnvironment() {
 		os.Exit(1)
 	}
+
+	// Print the exact frame we hand Discord. The card shows three lines and gives
+	// no clue which field landed where, so without this the only way to check a
+	// presence change is to squint at the popout.
+	debugPresence = *logPresence
 
 	// The worker owns the Discord connection so the UI thread never blocks on IPC.
 	updates := make(chan presence, 1)
@@ -221,12 +233,24 @@ func main() {
 		}
 	}()
 
-	targetURL := strings.TrimRight(*url, "/")
-	if !strings.HasSuffix(targetURL, "/player") {
-		targetURL += "/player"
-	}
-	w.Navigate(targetURL)
+	w.Navigate(playerURL(*appURL))
 	w.Run()
+}
+
+// playerURL points a bare origin at /player, leaving a URL that already names a
+// page alone. Matching on the raw string instead of the path would mangle the
+// app's own deep link — ".../player?play=<id>", the one the Discord button hands
+// out — into ".../player?play=<id>/player", because the query, not the path, is
+// what the string ends with.
+func playerURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return raw // not something we can reason about; navigate as given
+	}
+	if path := strings.TrimRight(u.Path, "/"); path == "" {
+		u.Path = "/player"
+	}
+	return u.String()
 }
 
 // send delivers the latest presence without ever blocking the UI thread,
@@ -343,6 +367,9 @@ func buildActivity(p presence) *dcActivity {
 	return act
 }
 
+// debugPresence logs every activity frame when -debug is passed.
+var debugPresence bool
+
 // setActivity sends a SET_ACTIVITY frame over the (already handshaked) Discord
 // IPC socket. We send it directly instead of via client.SetActivity so we can
 // include the `type` field that rich-go's payload struct omits.
@@ -354,6 +381,9 @@ func setActivity(act *dcActivity) error {
 	})
 	if err != nil {
 		return err
+	}
+	if debugPresence {
+		log.Printf("discord activity: %s", payload)
 	}
 	resp := ipc.Send(1, string(payload)) // opcode 1 = FRAME
 	// ipc.Send swallows socket errors internally (prints to stdout). An empty
