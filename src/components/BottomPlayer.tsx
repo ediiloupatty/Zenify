@@ -10,7 +10,7 @@ import { useCoverColor } from "@/lib/useCoverColor";
 import CoverImage from "@/components/CoverImage";
 import { cleanTitle } from "@/lib/cleanTitle";
 import { isRenderingActive, onRenderingActiveChange } from "@/lib/renderGate";
-import { formatAudioSpecs, describePlayback, isLosslessSource } from "@/lib/formatSpecs";
+import { formatAudioSpecs, describePlayback, isLosslessSource, formatQualityLine } from "@/lib/formatSpecs";
 import { useStreamQuality, withQuality, type StreamQuality } from "@/lib/useStreamQuality";
 import { saveDurationAction } from "@/app/admin/actions";
 import { toggleFavoriteAction, getFavoriteIdsAction } from "@/app/actions/favorites";
@@ -1276,13 +1276,22 @@ export default function BottomPlayer() {
     };
   }, []);
 
+  // Streaming quality chosen in Settings or via the player's quality badge.
+  // Applied via ?q= on the audio proxy; changing it mid-song reloads the
+  // current track at the new quality. Declared here rather than further down
+  // because the presence effect below lists it as a dependency.
+  const [streamQuality, setStreamQuality] = useStreamQuality();
+
   // ── Discord Rich Presence bridge ──────────────────────────────────────────
-  // Emit a "now playing" snapshot whenever the track or play/pause state changes.
-  // In a normal browser this CustomEvent is simply unheard and costs nothing. The
-  // desktop shell (see /desktop — Go + webview) installs a listener that forwards
-  // the detail to Discord via local RPC. Cover is made absolute so the desktop can
-  // optionally hand Discord a real URL; otherwise the native side falls back to the
-  // uploaded `zenify_logo` art asset.
+  // Emit a "now playing" snapshot whenever the track, play/pause state or stream
+  // quality changes. In a normal browser this CustomEvent is simply unheard and
+  // costs nothing. The desktop shell (see /desktop — Go + webview) installs a
+  // listener that forwards the detail to Discord via local RPC. Cover is made
+  // absolute so the desktop can optionally hand Discord a real URL; otherwise the
+  // native side falls back to the uploaded `zenify_logo` art asset.
+  //
+  // `quality` describes what is actually being decoded, so streaming at 128 kbps
+  // shows "MP3 · 128 kbps" — not the FLAC sitting untouched in the bucket.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const audio = audioRef.current;
@@ -1292,6 +1301,7 @@ export default function BottomPlayer() {
           title: cleanTitle(currentTrack.title),
           artist: currentTrack.artist || currentTrack.category || "",
           album: currentTrack.album || "",
+          quality: formatQualityLine(currentTrack, streamQuality) || "",
           cover: currentTrack.cover_url
             ? new URL(currentTrack.cover_url, window.location.origin).href
             : "",
@@ -1300,10 +1310,10 @@ export default function BottomPlayer() {
           duration: audio?.duration || currentTrack.duration || 0,
           appUrl: window.location.origin,
         }
-      : { id: "", title: "", artist: "", album: "", cover: "", state: "stopped", position: 0, duration: 0, appUrl: "" };
+      : { id: "", title: "", artist: "", album: "", quality: "", cover: "", state: "stopped", position: 0, duration: 0, appUrl: "" };
     window.dispatchEvent(new CustomEvent("zenify:nowplaying", { detail }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTrack?.id, isPlaying]);
+  }, [currentTrack?.id, isPlaying, streamQuality]);
 
   // ── Media Session (lock screen / notification bar / headset controls) ──────
   // Publish now-playing metadata so the OS can display it, and route the
@@ -1585,11 +1595,6 @@ export default function BottomPlayer() {
       stopGate();
     };
   }, [isExpanded, coverColor, isPlaying]);
-
-  // Streaming quality chosen in Settings or via the player's quality badge.
-  // Applied via ?q= on the audio proxy; changing it mid-song reloads the
-  // current track at the new quality.
-  const [streamQuality, setStreamQuality] = useStreamQuality();
 
   const rawUrl = currentTrack?.file_url || "";
   const audioSrc = withQuality(
