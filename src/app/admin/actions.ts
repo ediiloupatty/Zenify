@@ -16,6 +16,7 @@ function revalidateAll(customPath?: string) {
 }
 import sharp from "sharp";
 import { cleanTitle } from "@/lib/cleanTitle";
+import { plausibleYear } from "@/lib/trackYear";
 import { fetchCoverArt, fetchArtistImage } from "@/lib/coverArt";
 import { assertAdmin } from "@/lib/admin";
 
@@ -100,12 +101,10 @@ export async function uploadTrackAction(formData: FormData) {
       if (c.title) finalTitle = c.title;
       if (c.artist) artist = c.artist;
       if (c.album) album = c.album;
-      // Guarded, not just truthy-checked: the Go uploader wrote year = 1 to 2805
-      // rows before anyone noticed, and a bogus year is worse than no year — the
-      // UI printed it verbatim ("The Life of a Showgirl · 1").
-      if (c.year && c.year >= 1900 && c.year <= new Date().getFullYear() + 1) {
-        year = c.year;
-      }
+      // Guarded, not just truthy-checked: a bogus year is worse than no year, and
+      // the tagger that produced 2805 rows of `year = 1` is not the only one that
+      // can (see lib/trackYear).
+      year = plausibleYear(c.year) ?? year;
       if (c.genre && c.genre.length > 0) genre = c.genre[0];
       if (f.duration) duration = Math.round(f.duration);
       if (f.bitsPerSample) bitDepth = f.bitsPerSample;
