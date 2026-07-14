@@ -101,6 +101,10 @@ type presence struct {
 // so end users never need to pass -url. Falls back to localhost for dev.
 var defaultURL = "http://localhost:3000"
 
+// startHidden suppresses the initial reveal, leaving the app running in the tray.
+// Set by -minimized, which is how the autostart entry launches us.
+var startHidden bool
+
 func main() {
 	// Named appURL, not url: a variable called `url` would shadow the net/url
 	// package that playerURL below relies on.
@@ -112,7 +116,18 @@ func main() {
 		"log every Discord activity frame to stdout (kept separate from -debug: opening "+
 			"devtools changes how the page behaves, which is exactly what you don't want "+
 			"while diagnosing what the page reported)")
+	minimized := flag.Bool("minimized", false,
+		"start hidden in the tray instead of opening a window (what the autostart entry uses)")
 	flag.Parse()
+
+	// A second copy would mean two tray icons, two Discord presences overwriting
+	// each other, and two songs playing at once. If one is already running it has
+	// just been told to come to the front, so there is nothing left for us to do.
+	if !claimSingleInstance() {
+		return
+	}
+
+	startHidden = *minimized
 
 	if !checkEnvironment() {
 		os.Exit(1)
@@ -153,6 +168,11 @@ func main() {
 	trayInit(hwnd)
 	defer trayRemove()
 
+	// Taskbar thumbnail transport + the play/pause badge on the app icon. The
+	// buttons only attach once the shell announces the taskbar button, which the
+	// wndProc waits for; this just records the window and draws the glyphs.
+	taskbarInit(hwnd)
+
 	// Park the window off-screen so WebView2 renders the dark page without any
 	// visible flash; the injected script calls winReveal() once it has painted.
 	hideOffscreen(hwnd)
@@ -190,6 +210,7 @@ func main() {
 		changed := p.ID != "" && p.ID != lastTrackID
 		lastTrackID = p.ID
 		trayUpdate(p, changed && p.State == "playing")
+		taskbarUpdate(p)
 		send(updates, p)
 	})
 
