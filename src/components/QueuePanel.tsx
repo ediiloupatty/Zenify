@@ -135,7 +135,7 @@ export default function QueuePanel({
       {/* Click-away backdrop (mobile only, desktop shifts main layout) */}
       {open && (
         <div 
-          className="fixed inset-x-0 bottom-0 top-[77px] md:top-[89px] z-[55] bg-black/30 queue-backdrop-in md:hidden" 
+          className="fixed inset-x-0 bottom-0 top-[77px] md:top-[89px] z-[105] bg-black/30 queue-backdrop-in md:hidden" 
           style={{ marginTop: `${desktopOffset}px` }}
           onClick={onClose} 
         />
@@ -144,7 +144,7 @@ export default function QueuePanel({
       <aside
         role="dialog"
         aria-label="Play queue"
-        className={`fixed right-0 top-[77px] md:top-[89px] bottom-24 w-[300px] max-w-[88vw] z-[60] flex flex-col shadow-2xl transition-transform duration-500 ease-in-out ${
+        className={`fixed right-0 top-[77px] md:top-[89px] bottom-24 w-[300px] max-w-[88vw] z-[110] flex flex-col shadow-2xl transition-transform duration-500 ease-in-out ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
         style={{
