@@ -28,6 +28,8 @@ type HomeContentProps = {
   playlists: Playlist[];
   userFavorites: string[];
   isLoggedIn: boolean;
+  dailyMixes: any[];
+  initialAlbums: any[];
 };
 
 // ─── Cover art fallback (shared gradient logic) ──────────────────────────────
@@ -397,6 +399,8 @@ export default function HomeContent({
   playlists,
   userFavorites,
   isLoggedIn,
+  dailyMixes,
+  initialAlbums,
 }: HomeContentProps) {
   const [filteredTracks, setFilteredTracks] = useState<Track[] | null>(null);
   const [searchSlot, setSearchSlot] = useState<HTMLElement | null>(null);
@@ -471,10 +475,10 @@ export default function HomeContent({
           />
 
           {/* ─── DAILY MIX ────────────────────────────────────────── */}
-          <DailyMixSection />
+          <DailyMixSection fallbackData={{ mixes: dailyMixes }} />
 
           {/* ─── ALBUMS (horizontal) ─────────────────────────────────── */}
-          <AlbumSection currentAlbum={null} heading="Albums" limit={7} fillRow viewAllHref="/albums" />
+          <AlbumSection currentAlbum={null} heading="Albums" limit={7} fillRow viewAllHref="/albums" fallbackData={{ albums: initialAlbums }} />
 
           {/* ─── EXTRA: artists + playlists ──────────────────────────── */}
           <ArtistGrid heading="Popular Artists" artists={artists} limit={7} viewAllHref="/artists" />

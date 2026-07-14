@@ -184,7 +184,28 @@ func installFrameless(hwnd uintptr) {
 }
 
 func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
+	// Messages whose ids the system hands out at runtime, so they can't be `case`
+	// constants below. Both are guarded against a failed registration (id 0), which
+	// would otherwise swallow every WM_NULL.
+	switch {
+	case msgZenifyShow != 0 && msg == msgZenifyShow:
+		// A second Zenify was launched and asked us to surface rather than start a
+		// rival copy of itself.
+		winShowFromTray(hwnd)
+		return 0
+	case msgTaskbarButtonCreated != 0 && msg == msgTaskbarButtonCreated:
+		// The shell has (re)created our taskbar button — the earliest point the
+		// thumbbar buttons will stick.
+		taskbarButtonCreated(hwnd)
+		return 0
+	}
+
 	switch msg {
+	case wmCommand:
+		if taskbarCommand(wparam) {
+			return 0
+		}
+
 	case wmNcCalcSize:
 		if wparam != 0 {
 			return 0 // claim the entire window as client area
@@ -304,6 +325,14 @@ func winReveal(hwnd uintptr) {
 		return
 	}
 	revealed = true
+
+	// Started by the autostart entry: the user asked for the player to BE there at
+	// login, not to be handed a window. Go straight to the tray — the page has
+	// already painted by now, so clicking the icon opens instantly.
+	if startHidden {
+		winHideToTray(hwnd)
+		return
+	}
 
 	// Try to restore the window state saved from the previous session.
 	if state := loadWindowState(); state != nil {

@@ -2,7 +2,7 @@ import Link from "next/link";
 import PlaylistSection from "@/components/PlaylistSection";
 import HomeContent from "@/components/HomeContent";
 import Sidebar from "@/components/Sidebar";
-import { getTracksByCategory, getTracksByAlbum, getRecentlyPlayed, getUserFavorites, getArtists, getPlaylists, getPlaylistById, getPlaylistTracks, getTrackById, Track } from "@/lib/cloudflare";
+import { getTracksByCategory, getTracksByAlbum, getRecentlyPlayed, getUserFavorites, getArtists, getPlaylists, getPlaylistById, getPlaylistTracks, getTrackById, getDailyMixes, getAlbums, Track } from "@/lib/cloudflare";
 import { pickRandom } from "@/lib/pickRandom";
 import { auth, signOut } from "@/auth";
 import PlaylistDetail from "@/components/PlaylistDetail";
@@ -29,7 +29,7 @@ export default async function PlayerHome({
   const userEmail = session?.user?.email || null;
 
   // Run ALL independent fetches in parallel to avoid waterfall latency
-  const [autoPlayTrack, playlist, tracks, recentlyPlayed, artists, playlists] =
+  const [autoPlayTrack, playlist, tracks, recentlyPlayed, artists, playlists, albums] =
     await Promise.all([
       playTrackId ? getTrackById(playTrackId) : null,
       currentPlaylistId ? getPlaylistById(currentPlaylistId, userEmail) : null,
@@ -39,6 +39,7 @@ export default async function PlayerHome({
       getRecentlyPlayed(userEmail, 9),
       getArtists(),
       getPlaylists(userEmail),
+      getAlbums(),
     ]);
 
   // Home's song table used to be "Recently Added", which only ever changed when a
@@ -48,11 +49,23 @@ export default async function PlayerHome({
   const randomTracks = pickRandom(tracks, 12);
 
   // These depend on results above, run in parallel where possible
-  const [playlistTracks, userFavorites] = await Promise.all([
+  const [playlistTracks, userFavorites, rawMixes] = await Promise.all([
     playlist ? getPlaylistTracks(playlist.id, playlist.name) : Promise.resolve([]),
     userEmail ? getUserFavorites(userEmail) : Promise.resolve([]),
+    !currentPlaylistId ? getDailyMixes(userEmail, tracks) : Promise.resolve([]),
   ]);
   const isLoggedIn = !!session?.user;
+
+  const mixesPayload = rawMixes.map((m) => ({
+    ...m,
+    coverTracks: m.coverTracks.map((t) => ({
+      id: t.id,
+      cover_url: t.cover_url,
+      title: t.title,
+      artist: t.artist,
+      category: t.category,
+    })),
+  }));
 
   return (
     <div
@@ -86,6 +99,8 @@ export default async function PlayerHome({
                 playlists={playlists}
                 userFavorites={userFavorites}
                 isLoggedIn={isLoggedIn}
+                dailyMixes={mixesPayload}
+                initialAlbums={albums}
               />
             )}
           </div>

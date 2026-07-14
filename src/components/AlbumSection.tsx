@@ -23,6 +23,7 @@ export default function AlbumSection({
   allowHorizontal = false,
   fillRow = false,
   viewAllHref,
+  fallbackData,
 }: {
   currentAlbum: string | null;
   heading?: string;
@@ -30,9 +31,11 @@ export default function AlbumSection({
   allowHorizontal?: boolean;
   fillRow?: boolean;
   viewAllHref?: string;
+  fallbackData?: { albums: Album[] };
 }) {
   const router = useRouter();
   const { data } = useSWR<{ albums: Album[] }>("/api/albums", fetcher, {
+    fallbackData,
     revalidateOnFocus: false,
   });
 

@@ -63,6 +63,7 @@ const (
 	mfString    = 0x0000
 	mfSeparator = 0x0800
 	mfGrayed    = 0x0001
+	mfChecked   = 0x0008
 
 	swRestore  = 9
 	swHide     = 0
@@ -83,6 +84,7 @@ const (
 	idMini      = 0xA004
 	idShow      = 0xA005
 	idQuit      = 0xA006
+	idAutostart = 0xA007
 )
 
 // NOTIFYICONDATAW. Field order and padding match the C struct exactly on x64, so
@@ -217,12 +219,19 @@ func showTrayMenu(hwnd uintptr) {
 		miniLabel = "Keluar dari mini player"
 	}
 
+	autoFlags := uintptr(mfString)
+	if autostartEnabled() {
+		autoFlags |= mfChecked
+	}
+
 	appendMenu(hmenu, mfString, idPlayPause, playLabel)
 	appendMenu(hmenu, mfString, idNext, "Lagu berikutnya")
 	appendMenu(hmenu, mfString, idPrev, "Lagu sebelumnya")
 	appendMenu(hmenu, mfSeparator, 0, "")
 	appendMenu(hmenu, mfString, idMini, miniLabel)
 	appendMenu(hmenu, mfString, idShow, "Buka Zenify")
+	appendMenu(hmenu, mfSeparator, 0, "")
+	appendMenu(hmenu, autoFlags, idAutostart, "Jalankan saat Windows menyala")
 	appendMenu(hmenu, mfSeparator, 0, "")
 	appendMenu(hmenu, mfString, idQuit, "Keluar")
 
@@ -248,6 +257,11 @@ func showTrayMenu(hwnd uintptr) {
 		sendTrayCmd("mini")
 	case idShow:
 		sendTrayCmd("show")
+	case idAutostart:
+		// Read-then-flip rather than tracking it in a variable: the user can also
+		// revoke this from Task Manager's Startup tab, and the registry is the only
+		// thing that knows the truth.
+		autostartSet(!autostartEnabled())
 	case idQuit:
 		sendTrayCmd("quit")
 	}
