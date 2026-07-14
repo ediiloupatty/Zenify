@@ -56,8 +56,9 @@ function MixCover({ tracks }: { tracks: CoverTrack[] }) {
   );
 }
 
-export default function DailyMixSection() {
+export default function DailyMixSection({ fallbackData }: { fallbackData?: { mixes: MixPayload[] } }) {
   const { data, isLoading } = useSWR<{ mixes: MixPayload[] }>("/api/daily-mix", fetcher, {
+    fallbackData,
     revalidateOnFocus: false,
     dedupingInterval: 60_000,
   });
