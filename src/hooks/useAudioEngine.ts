@@ -551,6 +551,18 @@ export function useAudioEngine() {
   // ── Stream quality ─────────────────────────────────────────────────────────
   const [streamQuality, setStreamQuality] = useStreamQuality();
 
+  // Direct mode streams the original file regardless of the saved quality —
+  // an untouched output path is pointless when it's fed a lossy transcode. The
+  // saved preference is left alone so it comes back when direct mode goes off.
+  const effectiveQuality: StreamQuality = directMode ? "lossless" : streamQuality;
+
+  const chooseStreamQuality = (q: StreamQuality) => {
+    if (directMode && q !== "lossless") {
+      showToast("Direct Mode always streams the original file", "info");
+    }
+    setStreamQuality(q);
+  };
+
   // ── Discord Rich Presence bridge ───────────────────────────────────────────
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -561,7 +573,7 @@ export function useAudioEngine() {
           title: cleanTitle(currentTrack.title),
           artist: currentTrack.artist || currentTrack.category || "",
           album: currentTrack.album || "",
-          quality: formatQualityLine(currentTrack, streamQuality) || "",
+          quality: formatQualityLine(currentTrack, effectiveQuality) || "",
           cover: currentTrack.cover_url
             ? new URL(currentTrack.cover_url, window.location.origin).href
             : "",
@@ -573,7 +585,7 @@ export function useAudioEngine() {
       : { id: "", title: "", artist: "", album: "", quality: "", cover: "", state: "stopped", position: 0, duration: 0, appUrl: "" };
     window.dispatchEvent(new CustomEvent("zenify:nowplaying", { detail }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTrack?.id, isPlaying, streamQuality]);
+  }, [currentTrack?.id, isPlaying, effectiveQuality]);
 
   // ── Media Session ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -746,7 +758,7 @@ export function useAudioEngine() {
     rawUrl.includes(".r2.dev/")
       ? `/api/audio/${rawUrl.split(".r2.dev/").pop()}`
       : rawUrl,
-    streamQuality
+    effectiveQuality
   );
 
   const nextTrack = upcoming[0]?.track;
@@ -755,7 +767,7 @@ export function useAudioEngine() {
     nextRawUrl.includes(".r2.dev/")
       ? `/api/audio/${nextRawUrl.split(".r2.dev/").pop()}`
       : nextRawUrl,
-    streamQuality
+    effectiveQuality
   );
 
   const progressPercent = duration ? (progress / duration) * 100 : 0;
@@ -783,8 +795,9 @@ export function useAudioEngine() {
     sleepMode, sleepLeftMs, showSleepMenu, sleepMenuRef,
     chooseSleep, setShowSleepMenu: (v: boolean) => dispatch({ type: "SET_SHOW_SLEEP_MENU", payload: v }),
 
-    // Stream quality
-    streamQuality, setStreamQuality,
+    // Stream quality — the badge shows what actually plays (direct mode forces
+    // the original), and the picker warns when a lossy choice won't take effect.
+    streamQuality: effectiveQuality, setStreamQuality: chooseStreamQuality,
     directMode,
 
     // Audio sources
