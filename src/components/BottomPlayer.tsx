@@ -23,7 +23,7 @@ export default function BottomPlayer() {
     sleepMode, sleepLeftMs, showSleepMenu, sleepMenuRef,
     showQueue, setShowQueue,
     streamQuality, setStreamQuality,
-    audioSrc, nextAudioSrc,
+    audioSrc, nextAudioSrc, nativeActive,
     togglePlay, handlePrev,
     handleTimeUpdate, handleLoadedMetadata,
     handleEnded, handleAudioError, handlePlaying,
@@ -63,35 +63,41 @@ export default function BottomPlayer() {
 
   return (
     <>
-      <audio
-        ref={audioRef}
-        src={audioSrc || undefined}
-        crossOrigin="anonymous"
-        preload="auto"
-        onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
-        onSeeked={reportPositionState}
-        onPlaying={handlePlaying}
-        onEnded={handleEnded}
-        onError={handleAudioError}
-        controlsList="nodownload"
-      />
-      {/* Outgoing-track tail player for crossfade */}
-      <audio
-        ref={tailRef}
-        crossOrigin="anonymous"
-        preload="auto"
-        controlsList="nodownload"
-      />
-      {/* Warms up the NEXT track */}
-      {nextAudioSrc && (
-        <audio
-          src={nextAudioSrc}
-          crossOrigin="anonymous"
-          preload="metadata"
-          muted
-          controlsList="nodownload"
-        />
+      {/* In native mode (desktop Direct Mode) the Go engine plays the audio —
+          no elements are mounted and audioRef points at the native shim. */}
+      {!nativeActive && (
+        <>
+          <audio
+            ref={audioRef}
+            src={audioSrc || undefined}
+            crossOrigin="anonymous"
+            preload="auto"
+            onTimeUpdate={handleTimeUpdate}
+            onLoadedMetadata={handleLoadedMetadata}
+            onSeeked={reportPositionState}
+            onPlaying={handlePlaying}
+            onEnded={handleEnded}
+            onError={handleAudioError}
+            controlsList="nodownload"
+          />
+          {/* Outgoing-track tail player for crossfade */}
+          <audio
+            ref={tailRef}
+            crossOrigin="anonymous"
+            preload="auto"
+            controlsList="nodownload"
+          />
+          {/* Warms up the NEXT track */}
+          {nextAudioSrc && (
+            <audio
+              src={nextAudioSrc}
+              crossOrigin="anonymous"
+              preload="metadata"
+              muted
+              controlsList="nodownload"
+            />
+          )}
+        </>
       )}
 
       <QueuePanel

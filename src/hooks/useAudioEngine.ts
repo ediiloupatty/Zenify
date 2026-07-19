@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useReducer } from "react";
+import { useState, useRef, useEffect, useCallback, useReducer, useSyncExternalStore } from "react";
 import { Track } from "@/lib/cloudflare";
 import { usePlayer } from "@/context/PlayerContext";
 import { useToast } from "@/context/ToastContext";
@@ -9,6 +9,10 @@ import { isRenderingActive, onRenderingActiveChange } from "@/lib/renderGate";
 import { formatQualityLine } from "@/lib/formatSpecs";
 import { useStreamQuality, withQuality, type StreamQuality } from "@/lib/useStreamQuality";
 import { useDirectMode } from "@/lib/useDirectMode";
+import {
+  nativeEngineAvailable, nativeAudioShim, nativeLoad, nativeStop, onNativeEvent,
+  type NativeEventDetail,
+} from "@/lib/nativeEngine";
 import { saveDurationAction } from "@/app/admin/actions";
 import { CROSSFADE_SEC, type SleepMode, SLEEP_OPTIONS, formatTime } from "@/components/player/playerUtils";
 
@@ -107,6 +111,37 @@ export function useAudioEngine() {
   // samples leave the element untouched (as close to bit-perfect as a browser
   // allows — the OS shared-mode mixer is still downstream).
   const [directMode] = useDirectMode();
+
+  // ── Native engine (desktop Direct Mode) ────────────────────────────────────
+  // Inside the desktop shell, Direct Mode goes one step further: playback moves
+  // out of the browser into the Go engine (WASAPI). audioRef then points at
+  // nativeAudioShim so every existing element-based code path keeps working.
+  // A track the engine can't decode marks itself broken and falls back to the
+  // <audio> element — never less playable than before.
+  // The shell's bindings exist before any page script runs, so availability is
+  // constant for the whole session — the store never emits a change.
+  const nativeReady = useSyncExternalStore(
+    () => () => {},
+    nativeEngineAvailable,
+    () => false,
+  );
+  const [nativeBrokenId, setNativeBrokenId] = useState<string | null>(null);
+  const nativeActive =
+    nativeReady && directMode && !!currentTrack && currentTrack.id !== nativeBrokenId;
+  const nativeActiveRef = useRef(false);
+  useEffect(() => { nativeActiveRef.current = nativeActive; }, [nativeActive]);
+
+  useEffect(() => {
+    if (!nativeActive) return;
+    audioRef.current = nativeAudioShim as unknown as HTMLAudioElement;
+    return () => {
+      // Only clear if the element hasn't already reclaimed the ref (React
+      // attaches the real <audio> before this cleanup runs on deactivation).
+      if (audioRef.current === (nativeAudioShim as unknown as HTMLAudioElement)) {
+        audioRef.current = null;
+      }
+    };
+  }, [nativeActive]);
 
   useEffect(() => {
     if ((window as { __ZENIFY_DESKTOP__?: boolean }).__ZENIFY_DESKTOP__) {
@@ -775,6 +810,81 @@ export function useAudioEngine() {
 
   const progressPercent = duration ? (progress / duration) * 100 : 0;
 
+  // ── Native engine wiring ───────────────────────────────────────────────────
+  // Feed the engine the current track and translate its events into the same
+  // handlers the <audio> element would have fired, via always-fresh refs.
+  const prevNativeRef = useRef(false);
+  useEffect(() => {
+    if (prevNativeRef.current && !nativeActive) nativeStop();
+    prevNativeRef.current = nativeActive;
+  }, [nativeActive]);
+
+  useEffect(() => {
+    if (!nativeActive || !audioSrc) return;
+    nativeLoad(new URL(audioSrc, window.location.origin).href);
+  }, [nativeActive, audioSrc]);
+
+  const nativeHandlersRef = useRef({
+    loaded: () => {}, tick: () => {}, ended: () => {}, error: () => {},
+  });
+  useEffect(() => {
+    nativeHandlersRef.current = {
+      loaded: () => {
+        handleLoadedMetadata();
+        if (isPlaying) nativeAudioShim.play();
+      },
+      tick: handleTimeUpdate,
+      ended: handleEnded,
+      error: () => {
+        setNativeBrokenId(currentTrack?.id ?? null);
+        showToast("Native engine can't play this file — using browser playback", "info");
+      },
+    };
+  });
+  useEffect(() => {
+    if (!nativeReady) return;
+    return onNativeEvent((d: NativeEventDetail) => {
+      if (!nativeActiveRef.current) return;
+      const h = nativeHandlersRef.current;
+      if (d.type === "loaded") h.loaded();
+      else if (d.type === "position") h.tick();
+      else if (d.type === "ended") h.ended();
+      else if (d.type === "error") h.error();
+    });
+  }, [nativeReady]);
+
+  // ── Desktop media keys ─────────────────────────────────────────────────────
+  // The shell forwards hardware media keys and tray transport clicks as
+  // zenify:mediakey events. Vital in native mode (no <audio> element means no
+  // browser Media Session), and it also makes the tray controls work at all.
+  const mediaKeyRef = useRef({
+    toggle: () => {}, next: () => {}, prev: () => {}, stop: () => {},
+  });
+  useEffect(() => {
+    mediaKeyRef.current = {
+      toggle: () => togglePlay(),
+      next: () => playNextTrack(),
+      prev: handlePrev,
+      stop: () => {
+        audioRef.current?.pause();
+        setIsPlaying(false);
+      },
+    };
+  });
+  useEffect(() => {
+    const onMediaKey = (e: Event) => {
+      const k = mediaKeyRef.current;
+      switch ((e as CustomEvent<string>).detail) {
+        case "play-pause": k.toggle(); break;
+        case "next": k.next(); break;
+        case "prev": k.prev(); break;
+        case "stop": k.stop(); break;
+      }
+    };
+    window.addEventListener("zenify:mediakey", onMediaKey);
+    return () => window.removeEventListener("zenify:mediakey", onMediaKey);
+  }, []);
+
   return {
     // Context-forwarded
     tracks, currentTrackIndex, currentTrack,
@@ -801,7 +911,7 @@ export function useAudioEngine() {
     // Stream quality — the badge shows what actually plays (direct mode forces
     // the original), and the picker warns when a lossy choice won't take effect.
     streamQuality: effectiveQuality, setStreamQuality: chooseStreamQuality,
-    directMode,
+    directMode, nativeActive,
 
     // Audio sources
     audioSrc, nextAudioSrc,
