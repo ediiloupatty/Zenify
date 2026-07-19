@@ -43,8 +43,9 @@ const (
 	lwaAlpha    = 0x00000002 // LWA_ALPHA — the whole window fades uniformly
 
 	// Mini-player opacity: see-through while idle so a game behind stays visible,
-	// fully opaque on hover so it's crisp to read and click.
-	miniAlphaIdle  = 210 // ~82%
+	// fully opaque on hover so it's crisp to read and click. Low idle value =
+	// strongly transparent (the panel reads as glass, not a solid box).
+	miniAlphaIdle  = 150 // ~59%
 	miniAlphaHover = 255
 
 	swpNoSize      = 0x0001

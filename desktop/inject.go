@@ -193,10 +193,14 @@ window.__zenifyClick = function (action) {
     // as solid even while the whole overlay is see-through.
     var m = document.createElement('div');
     m.id = 'zenify-mini';
+    // Light, low-opacity frosted glass rather than a solid dark box: most of the
+    // panel is translucent so the window's see-through (set by the Go side) reads
+    // as glass. A faint slate tint + blur keeps it a "material" without going
+    // black. Cover/text/buttons below stay high-contrast so they still read.
     m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:none;align-items:center;gap:13px;padding:13px 15px;box-sizing:border-box;' +
-      'background:linear-gradient(135deg,rgba(22,26,36,0.82) 0%,rgba(9,11,16,0.88) 100%);' +
-      'backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);' +
-      'box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08),inset 0 1px 0 rgba(255,255,255,0.06);' +
+      'background:linear-gradient(135deg,rgba(40,52,72,0.30) 0%,rgba(20,26,38,0.38) 100%);' +
+      'backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);' +
+      'box-shadow:inset 0 0 0 1px rgba(255,255,255,0.10),inset 0 1px 0 rgba(255,255,255,0.08);' +
       'color:#e2e8f0;font-family:system-ui,Segoe UI,sans-serif;user-select:none';
     m.onmousedown = function(){ call('winDragStart'); };
     // Hover → fully opaque (crisp to read & click); leave → back to see-through.
@@ -212,12 +216,14 @@ window.__zenifyClick = function (action) {
 
     var title = document.createElement('div');
     title.id = 'zenify-mini-title';
-    title.style.cssText = 'font-size:14px;font-weight:800;letter-spacing:-.01em;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px rgba(0,0,0,.6)';
+    // Strong layered shadow so white text stays legible over a bright game
+    // showing through the transparent panel.
+    title.style.cssText = 'font-size:14px;font-weight:800;letter-spacing:-.01em;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.7)';
     title.textContent = 'Zenify';
 
     var artist = document.createElement('div');
     artist.id = 'zenify-mini-artist';
-    artist.style.cssText = 'font-size:12px;font-weight:500;color:#c3ccd8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.5)';
+    artist.style.cssText = 'font-size:12px;font-weight:600;color:#dbe3ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 6px rgba(0,0,0,.6)';
 
     var ctrls = document.createElement('div');
     ctrls.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:7px';
