@@ -396,6 +396,11 @@ export default function SettingsPage() {
                         ? "High — MP3 320 kbps, near-lossless at a fraction of the size"
                         : "Data saver — MP3 128 kbps, smoothest on slow networks"}
                   </p>
+                  {directMode && streamQuality !== "lossless" && (
+                    <p className="text-xs mt-0.5" style={{ color: "var(--accent)" }}>
+                      Direct Mode is on — the original file streams while it&apos;s active
+                    </p>
+                  )}
                 </div>
               </div>
               {/* Tri-state segmented control */}
@@ -445,7 +450,7 @@ export default function SettingsPage() {
                   </p>
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                     {directMode
-                      ? "Untouched audio path — volume locked at 100%, visualizer & crossfade off"
+                      ? "Original file, untouched path — volume locked at 100%, visualizer & crossfade off"
                       : "Off — visualizer, crossfade, and volume control active"}
                   </p>
                 </div>
