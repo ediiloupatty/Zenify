@@ -24,7 +24,16 @@ export type NativeEventDetail = {
   sampleRate?: number;
   bits?: number;
   channels?: number;
+  mode?: "exclusive" | "shared";
   message?: string;
+};
+
+// What the DAC is actually being fed right now — surfaced in the UI so the user
+// can confirm bit-perfect exclusive output without reading the DAC's LED.
+export type NativeStatus = {
+  mode: "exclusive" | "shared" | null;
+  sampleRate: number;
+  bits: number;
 };
 
 type NativeBindings = {
@@ -33,6 +42,7 @@ type NativeBindings = {
   nativePause: () => Promise<void>;
   nativeSeek: (sec: number) => Promise<void>;
   nativeStop: () => Promise<void>;
+  nativeSetExclusive: (on: boolean) => Promise<void>;
 };
 
 function bindings(): NativeBindings | null {
@@ -54,7 +64,37 @@ const st = {
   paused: true,
   basePos: 0, // engine-confirmed position…
   baseAt: 0, // …taken at this performance.now()
+  mode: null as "exclusive" | "shared" | null,
+  sampleRate: 0,
+  bits: 0,
 };
+
+// Status subscribers (React useSyncExternalStore). Snapshot is immutable so
+// referential equality tells React when nothing changed.
+let statusSnapshot: NativeStatus = { mode: null, sampleRate: 0, bits: 0 };
+const statusListeners = new Set<() => void>();
+
+function publishStatus() {
+  const next: NativeStatus = { mode: st.mode, sampleRate: st.sampleRate, bits: st.bits };
+  if (
+    next.mode === statusSnapshot.mode &&
+    next.sampleRate === statusSnapshot.sampleRate &&
+    next.bits === statusSnapshot.bits
+  ) {
+    return;
+  }
+  statusSnapshot = next;
+  statusListeners.forEach((l) => l());
+}
+
+export function subscribeNativeStatus(cb: () => void): () => void {
+  statusListeners.add(cb);
+  return () => statusListeners.delete(cb);
+}
+
+export function getNativeStatus(): NativeStatus {
+  return statusSnapshot;
+}
 
 function nowPos(): number {
   if (st.paused) return st.basePos;
@@ -123,8 +163,18 @@ export function nativeLoad(url: string) {
 export function nativeStop() {
   st.src = "";
   st.duration = 0;
+  st.mode = null;
+  st.sampleRate = 0;
+  st.bits = 0;
   commitPos(0, false);
+  publishStatus();
   bindings()?.nativeStop();
+}
+
+// Choose WASAPI exclusive vs shared for the NEXT track. Persisted by the caller;
+// this just forwards the current preference to the engine.
+export function nativeSetExclusive(on: boolean) {
+  bindings()?.nativeSetExclusive(on);
 }
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -138,7 +188,11 @@ export function onNativeEvent(cb: (d: NativeEventDetail) => void): () => void {
     switch (d.type) {
       case "loaded":
         st.duration = d.duration || 0;
+        st.mode = d.mode || null;
+        st.sampleRate = d.sampleRate || 0;
+        st.bits = d.bits || 0;
         commitPos(0, false);
+        publishStatus();
         break;
       case "position":
         commitPos(d.pos || 0, !!d.playing);

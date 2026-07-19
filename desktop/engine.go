@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,16 +30,29 @@ import (
 // ─── Engine ─────────────────────────────────────────────────────────────────
 
 type audioEngine struct {
-	mu     sync.Mutex
-	emitJS func(string) // runs a JS snippet on the page (UI-thread dispatched)
-	ctx    *malgo.AllocatedContext
-	gen    atomic.Int64 // bumped on every Load/Stop; stale goroutines self-cancel
-	cur    *playback
+	mu        sync.Mutex
+	emitJS    func(string) // runs a JS snippet on the page (UI-thread dispatched)
+	ctx       *malgo.AllocatedContext
+	gen       atomic.Int64 // bumped on every Load/Stop; stale goroutines self-cancel
+	cur       *playback
+	exclusive atomic.Bool // prefer WASAPI exclusive mode (true bit-perfect)
 }
 
 func newAudioEngine(emitJS func(string)) *audioEngine {
-	return &audioEngine{emitJS: emitJS}
+	e := &audioEngine{emitJS: emitJS}
+	e.exclusive.Store(true) // the whole point of the native engine; the page can override
+	return e
 }
+
+// SetExclusive chooses the WASAPI mode used from the NEXT track onwards.
+//   - exclusive: the app takes sole ownership of the DAC, WASAPI is told not to
+//     resample (NoAutoConvertSRC), and the device is opened at the file's own
+//     sample rate — the DAC receives the exact bits and its rate LED follows
+//     the track. Fails if another app already holds the DAC exclusively, in
+//     which case startPlayback falls back to shared for that track.
+//   - shared: the Windows mixer stays in the path (its default rate, other apps
+//     can still play). Not bit-perfect, but never fails.
+func (e *audioEngine) SetExclusive(on bool) { e.exclusive.Store(on) }
 
 // emitEvent delivers an event to the page unless it belongs to a superseded
 // load. The JSON goes through a CustomEvent so the web side has one listener.
@@ -198,11 +212,7 @@ func (e *audioEngine) startPlayback(gen int64, url string) {
 		fail(err)
 		return
 	}
-	cfg := malgo.DefaultDeviceConfig(malgo.Playback)
-	cfg.Playback.Format = format
-	cfg.Playback.Channels = uint32(channels)
-	cfg.SampleRate = uint32(rate)
-	device, err := malgo.InitDevice(mctx.Context, cfg, malgo.DeviceCallbacks{Data: p.onData})
+	device, mode, err := e.initDevice(mctx, format, channels, rate, p.onData)
 	if err != nil {
 		src.Close()
 		fail(fmt.Errorf("audio device: %w", err))
@@ -237,7 +247,50 @@ func (e *audioEngine) startPlayback(gen int64, url string) {
 	e.emitEvent(gen, map[string]any{
 		"type": "loaded", "duration": duration,
 		"sampleRate": rate, "bits": bits, "channels": channels,
+		"mode": mode, // "exclusive" | "shared" — what the DAC actually got
 	})
+}
+
+// initDevice opens the playback device at the file's own sample rate. When
+// exclusive mode is preferred it is attempted first with sample-rate conversion
+// disabled (so the DAC receives the exact rate and its LED tracks the file); if
+// that fails — most often because another app already owns the DAC exclusively,
+// or the DAC can't do this rate/format in hardware — it silently falls back to
+// shared mode, which always works. Returns the device and the mode achieved.
+func (e *audioEngine) initDevice(
+	mctx *malgo.AllocatedContext,
+	format malgo.FormatType, channels, rate int,
+	onData func(_, _ []byte, _ uint32),
+) (*malgo.Device, string, error) {
+	build := func(share malgo.ShareMode) malgo.DeviceConfig {
+		cfg := malgo.DefaultDeviceConfig(malgo.Playback)
+		cfg.Playback.Format = format
+		cfg.Playback.Channels = uint32(channels)
+		cfg.SampleRate = uint32(rate)
+		cfg.Playback.ShareMode = share
+		if share == malgo.Exclusive {
+			// Never let WASAPI resample under us — that would defeat the point
+			// and light the wrong rate on the DAC.
+			cfg.Wasapi.NoAutoConvertSRC = 1
+		}
+		return cfg
+	}
+
+	if e.exclusive.Load() {
+		if dev, err := malgo.InitDevice(mctx.Context, build(malgo.Exclusive),
+			malgo.DeviceCallbacks{Data: onData}); err == nil {
+			return dev, "exclusive", nil
+		} else {
+			log.Printf("audio: exclusive mode unavailable (%v) — using shared", err)
+		}
+	}
+
+	dev, err := malgo.InitDevice(mctx.Context, build(malgo.Shared),
+		malgo.DeviceCallbacks{Data: onData})
+	if err != nil {
+		return nil, "", err
+	}
+	return dev, "shared", nil
 }
 
 // onData feeds the device from the ring. Paused or buffering produces silence;

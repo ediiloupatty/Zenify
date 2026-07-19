@@ -11,8 +11,10 @@ import { useStreamQuality, withQuality, type StreamQuality } from "@/lib/useStre
 import { useDirectMode } from "@/lib/useDirectMode";
 import {
   nativeEngineAvailable, nativeAudioShim, nativeLoad, nativeStop, onNativeEvent,
+  nativeSetExclusive, subscribeNativeStatus, getNativeStatus,
   type NativeEventDetail,
 } from "@/lib/nativeEngine";
+import { useExclusiveMode } from "@/lib/useExclusiveMode";
 import { saveDurationAction } from "@/app/admin/actions";
 import { CROSSFADE_SEC, type SleepMode, SLEEP_OPTIONS, formatTime } from "@/components/player/playerUtils";
 
@@ -130,6 +132,16 @@ export function useAudioEngine() {
     nativeReady && directMode && !!currentTrack && currentTrack.id !== nativeBrokenId;
   const nativeActiveRef = useRef(false);
   useEffect(() => { nativeActiveRef.current = nativeActive; }, [nativeActive]);
+
+  // WASAPI exclusive-mode preference → engine (applies to the next Load), and
+  // the live status the engine reports back (what the DAC is actually getting).
+  const [exclusiveMode] = useExclusiveMode();
+  useEffect(() => {
+    if (nativeReady) nativeSetExclusive(exclusiveMode);
+  }, [nativeReady, exclusiveMode]);
+  const nativeStatus = useSyncExternalStore(
+    subscribeNativeStatus, getNativeStatus, () => getNativeStatus(),
+  );
 
   useEffect(() => {
     if (!nativeActive) return;
@@ -911,7 +923,7 @@ export function useAudioEngine() {
     // Stream quality — the badge shows what actually plays (direct mode forces
     // the original), and the picker warns when a lossy choice won't take effect.
     streamQuality: effectiveQuality, setStreamQuality: chooseStreamQuality,
-    directMode, nativeActive,
+    directMode, nativeActive, nativeStatus,
 
     // Audio sources
     audioSrc, nextAudioSrc,
