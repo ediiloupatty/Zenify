@@ -2,7 +2,7 @@
 ;
 ; SEBELUM compile:
 ;   1) build exe produksi dulu dari CMD di folder desktop:
-;        release.bat https://music-livid-xi.vercel.app
+;        release.bat https://www.zenify.cc/player
 ;   2) buka file ini di Inno Setup -> Build -> Compile (Ctrl+F9)
 ;
 ; Hasil: Output\ZenifySetup.exe  — itu yang dibagikan ke orang lain.
