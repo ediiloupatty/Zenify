@@ -17,6 +17,7 @@ package main
 
 import (
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -71,6 +72,7 @@ const (
 	swShowNoAc = 4 // SW_SHOWNOACTIVATE
 
 	swpShowWindow = 0x0040
+	swpNoMove     = 0x0002
 
 	hwndTopmost   = ^uintptr(0) // -1
 	hwndNoTopmost = ^uintptr(1) // -2
@@ -361,12 +363,43 @@ func winIsVisible(hwnd uintptr) bool {
 	return r != 0
 }
 
+// miniTopmostStop halts the re-assert goroutine when leaving mini mode.
+var miniTopmostStop chan struct{}
+
+// keepMiniOnTop re-pins the mini player above everything every couple of seconds
+// while it is showing. A borderless/windowed game that grabs the foreground can
+// demote other topmost windows; without this the overlay would slip behind it.
+// SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE means it only fixes the z-order — the
+// window never moves, resizes, or steals focus from the game. (This just manages
+// our own window; it does not touch the game process, so anti-cheat is unaffected.
+// True EXCLUSIVE-fullscreen games still can't be overlaid — a Windows limitation
+// no non-injecting app can beat; use borderless/windowed mode for those.)
+func keepMiniOnTop(hwnd uintptr, stop <-chan struct{}) {
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			if isMini {
+				pSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0,
+					swpNoMove|swpNoSize|swpNoActivate)
+			}
+		}
+	}
+}
+
 // winToggleMini shrinks the window into a compact always-on-top player parked in
 // the bottom-right corner, and back. Returns the new mini state so the caller can
 // tell the page to swap its layout.
 func winToggleMini(hwnd uintptr) bool {
 	if isMini {
 		isMini = false // clear first: WM_GETMINMAXINFO fires during SetWindowPos
+		if miniTopmostStop != nil {
+			close(miniTopmostStop)
+			miniTopmostStop = nil
+		}
 		pSetWindowPos.Call(hwnd, hwndNoTopmost,
 			uintptr(preMiniRect.Left), uintptr(preMiniRect.Top),
 			uintptr(preMiniRect.Right-preMiniRect.Left),
@@ -397,6 +430,10 @@ func winToggleMini(hwnd uintptr) bool {
 		uintptr(wa.Right-w-margin), uintptr(wa.Bottom-h-margin),
 		uintptr(w), uintptr(h),
 		swpFrameChange|swpShowWindow)
+
+	// Keep re-pinning it on top so a fullscreen-ish game can't bury it.
+	miniTopmostStop = make(chan struct{})
+	go keepMiniOnTop(hwnd, miniTopmostStop)
 	return true
 }
 
