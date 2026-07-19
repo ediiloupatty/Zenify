@@ -1,14 +1,17 @@
 "use client";
 
 import { useTheme } from "@/context/ThemeContext";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { getCurrentUserAction, signOutAction } from "@/app/actions/settings";
 import { useAudioCache, formatBytes } from "@/lib/useAudioCache";
 import { useStreamQuality } from "@/lib/useStreamQuality";
 import { useDirectMode } from "@/lib/useDirectMode";
 import { useExclusiveMode } from "@/lib/useExclusiveMode";
-import { nativeEngineAvailable, subscribeNativeStatus, getNativeStatus } from "@/lib/nativeEngine";
+import {
+  nativeEngineAvailable, subscribeNativeStatus, getNativeStatus,
+  nativeClearCache, nativeCacheStats,
+} from "@/lib/nativeEngine";
 import { useToast } from "@/context/ToastContext";
 
 type UserInfo = {
@@ -37,6 +40,16 @@ export default function SettingsPage() {
   const nativeStatus = useSyncExternalStore(
     subscribeNativeStatus, getNativeStatus, () => getNativeStatus(),
   );
+
+  // On desktop the audio never touches the browser SW cache — the native engine
+  // keeps its own on-disk cache, so surface THAT in the Cached Songs row.
+  const [nativeCache, setNativeCache] = useState<{ count: number; bytes: number } | null>(null);
+  const refreshNativeCache = useCallback(() => {
+    nativeCacheStats().then(setNativeCache).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (nativeReady) refreshNativeCache();
+  }, [nativeReady, refreshNativeCache]);
 
   useEffect(() => {
     getCurrentUserAction().then((u) => {
@@ -618,17 +631,24 @@ export default function SettingsPage() {
                     Cached Songs
                   </p>
                   <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    {swReady && stats
-                      ? `${stats.trackCount} songs · ${formatBytes(stats.totalSize)}`
-                      : swReady
-                        ? "No cached songs yet"
-                        : "Service Worker loading..."}
+                    {nativeReady
+                      ? nativeCache
+                        ? nativeCache.count > 0
+                          ? `${nativeCache.count} songs · ${formatBytes(nativeCache.bytes)} (native)`
+                          : "No cached songs yet"
+                        : "Reading cache..."
+                      : swReady && stats
+                        ? `${stats.trackCount} songs · ${formatBytes(stats.totalSize)}`
+                        : swReady
+                          ? "No cached songs yet"
+                          : "Service Worker loading..."}
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => {
                   refreshStats();
+                  if (nativeReady) refreshNativeCache();
                 }}
                 className="text-xs font-semibold px-3 py-1.5 rounded-full transition-colors"
                 style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}
@@ -644,12 +664,19 @@ export default function SettingsPage() {
               onClick={async () => {
                 setClearing(true);
                 clearCache();
+                if (nativeReady) await nativeClearCache();
                 setTimeout(() => {
                   refreshStats();
+                  if (nativeReady) refreshNativeCache();
                   setClearing(false);
                 }, 500);
               }}
-              disabled={clearing || !swReady || (stats?.trackCount === 0)}
+              disabled={
+                clearing ||
+                (nativeReady
+                  ? !nativeCache || nativeCache.count === 0
+                  : !swReady || stats?.trackCount === 0)
+              }
               className="w-full flex items-center justify-between px-4 py-4 transition-all active:scale-[0.99] text-left disabled:opacity-40"
               style={{ color: "#ef4444" }}
             >

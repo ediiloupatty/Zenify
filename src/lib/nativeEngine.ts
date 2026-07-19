@@ -36,6 +36,8 @@ export type NativeStatus = {
   bits: number;
 };
 
+export type NativeCacheStats = { count: number; bytes: number };
+
 type NativeBindings = {
   nativeLoad: (url: string) => Promise<void>;
   nativePlay: () => Promise<void>;
@@ -43,6 +45,9 @@ type NativeBindings = {
   nativeSeek: (sec: number) => Promise<void>;
   nativeStop: () => Promise<void>;
   nativeSetExclusive: (on: boolean) => Promise<void>;
+  nativePrefetch: (url: string) => Promise<void>;
+  nativeClearCache: () => Promise<void>;
+  nativeCacheStats: () => Promise<NativeCacheStats>;
 };
 
 function bindings(): NativeBindings | null {
@@ -175,6 +180,19 @@ export function nativeStop() {
 // this just forwards the current preference to the engine.
 export function nativeSetExclusive(on: boolean) {
   bindings()?.nativeSetExclusive(on);
+}
+
+// Warm the cache for the likely-next track so its transition is near-instant.
+export function nativePrefetch(url: string) {
+  if (url) bindings()?.nativePrefetch(url);
+}
+
+export function nativeClearCache(): Promise<void> {
+  return bindings()?.nativeClearCache() ?? Promise.resolve();
+}
+
+export function nativeCacheStats(): Promise<NativeCacheStats> {
+  return bindings()?.nativeCacheStats() ?? Promise.resolve({ count: 0, bytes: 0 });
 }
 
 // ── Events ──────────────────────────────────────────────────────────────────
