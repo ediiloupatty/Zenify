@@ -146,7 +146,10 @@ export function useAudioEngine() {
         audioRef.current?.pause();
         setIsPlaying(false);
         showToast("Sleep timer ended — playback paused", "info");
-      } else {
+      } else if (isRenderingActive()) {
+        // The countdown display is pure UI — skip the per-second re-render
+        // while the app is in the background. The deadline check above still
+        // runs every tick, so the timer itself never drifts.
         dispatch({ type: "SET_SLEEP_LEFT", payload: left });
       }
     }, 1000);
