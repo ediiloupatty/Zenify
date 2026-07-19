@@ -54,6 +54,18 @@ func newAudioEngine(emitJS func(string)) *audioEngine {
 //     can still play). Not bit-perfect, but never fails.
 func (e *audioEngine) SetExclusive(on bool) { e.exclusive.Store(on) }
 
+// Prefetch warms the disk cache for a track the user is likely to play next, so
+// the transition is near-instant (no network wait) instead of gapped. Safe to
+// call repeatedly — it dedups against any in-flight or completed download.
+func (e *audioEngine) Prefetch(url string) { prefetch(url) }
+
+// ClearCache empties the native audio cache (surfaced in Settings, since on
+// desktop the audio bypasses the browser's service-worker cache entirely).
+func (e *audioEngine) ClearCache() { clearCache() }
+
+// CacheStats reports the native cache size for the Settings "Cached Songs" row.
+func (e *audioEngine) CacheStats() cacheStats { return cacheStatsNow() }
+
 // emitEvent delivers an event to the page unless it belongs to a superseded
 // load. The JSON goes through a CustomEvent so the web side has one listener.
 func (e *audioEngine) emitEvent(gen int64, payload map[string]any) {

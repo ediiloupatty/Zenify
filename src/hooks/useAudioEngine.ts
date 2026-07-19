@@ -11,7 +11,7 @@ import { useStreamQuality, withQuality, type StreamQuality } from "@/lib/useStre
 import { useDirectMode } from "@/lib/useDirectMode";
 import {
   nativeEngineAvailable, nativeAudioShim, nativeLoad, nativeStop, onNativeEvent,
-  nativeSetExclusive, subscribeNativeStatus, getNativeStatus,
+  nativeSetExclusive, nativePrefetch, subscribeNativeStatus, getNativeStatus,
   type NativeEventDetail,
 } from "@/lib/nativeEngine";
 import { useExclusiveMode } from "@/lib/useExclusiveMode";
@@ -835,6 +835,14 @@ export function useAudioEngine() {
     if (!nativeActive || !audioSrc) return;
     nativeLoad(new URL(audioSrc, window.location.origin).href);
   }, [nativeActive, audioSrc]);
+
+  // Prefetch the next track's file into the native cache while this one plays,
+  // so the transition is near-instant instead of waiting on the network. Skip
+  // for repeat-one (the same file just loops) — nothing to warm.
+  useEffect(() => {
+    if (!nativeActive || !nextAudioSrc || repeatMode === "one") return;
+    nativePrefetch(new URL(nextAudioSrc, window.location.origin).href);
+  }, [nativeActive, nextAudioSrc, repeatMode]);
 
   const nativeHandlersRef = useRef({
     loaded: () => {}, tick: () => {}, ended: () => {}, error: () => {},
