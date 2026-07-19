@@ -6,6 +6,8 @@ import Link from "next/link";
 import { getCurrentUserAction, signOutAction } from "@/app/actions/settings";
 import { useAudioCache, formatBytes } from "@/lib/useAudioCache";
 import { useStreamQuality } from "@/lib/useStreamQuality";
+import { useDirectMode } from "@/lib/useDirectMode";
+import { useToast } from "@/context/ToastContext";
 
 type UserInfo = {
   name: string;
@@ -22,6 +24,8 @@ export default function SettingsPage() {
   const { isOnline, stats, swReady, refreshStats, clearCache } = useAudioCache();
   const [clearing, setClearing] = useState(false);
   const [streamQuality, setStreamQuality] = useStreamQuality();
+  const [directMode, setDirectMode] = useDirectMode();
+  const { showToast } = useToast();
 
   useEffect(() => {
     getCurrentUserAction().then((u) => {
@@ -420,6 +424,54 @@ export default function SettingsPage() {
                   );
                 })}
               </div>
+            </div>
+
+            <div style={{ height: "1px", background: "var(--border-subtle)", margin: "0 1rem" }} />
+
+            {/* Direct Mode */}
+            <div className="flex items-center justify-between px-4 py-4">
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 1a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-2a7 7 0 0 1 14 0v2h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
+                    Direct Mode
+                  </p>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    {directMode
+                      ? "Untouched audio path — volume locked at 100%, visualizer & crossfade off"
+                      : "Off — visualizer, crossfade, and volume control active"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  const next = !directMode;
+                  setDirectMode(next);
+                  if (
+                    next &&
+                    (window as { __zenifyAudioGraphActive?: boolean }).__zenifyAudioGraphActive
+                  ) {
+                    showToast("Reload the app to fully apply Direct Mode", "info");
+                  }
+                }}
+                className="relative w-12 h-6 rounded-full transition-all duration-300 focus:outline-none"
+                style={{
+                  background: directMode ? "var(--accent)" : "var(--bg-card-hover)",
+                  border: "1px solid var(--border-card)",
+                }}
+              >
+                <span
+                  className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300"
+                  style={{ left: directMode ? "calc(100% - 1.375rem)" : "0.125rem" }}
+                />
+              </button>
             </div>
           </div>
         </section>
