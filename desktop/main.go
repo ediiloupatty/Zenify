@@ -219,6 +219,7 @@ func main() {
 	w.Bind("nativePause", func() { eng.Pause() })
 	w.Bind("nativeSeek", func(sec float64) { eng.Seek(sec) })
 	w.Bind("nativeStop", func() { eng.Stop() })
+	w.Bind("nativeSetExclusive", func(on bool) { eng.SetExclusive(on) })
 
 	// Exposed to the page as window.zenifyPresence(detail). webview unmarshals the
 	// JS object argument straight into our struct. We hand off without blocking.

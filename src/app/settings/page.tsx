@@ -1,12 +1,14 @@
 "use client";
 
 import { useTheme } from "@/context/ThemeContext";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { getCurrentUserAction, signOutAction } from "@/app/actions/settings";
 import { useAudioCache, formatBytes } from "@/lib/useAudioCache";
 import { useStreamQuality } from "@/lib/useStreamQuality";
 import { useDirectMode } from "@/lib/useDirectMode";
+import { useExclusiveMode } from "@/lib/useExclusiveMode";
+import { nativeEngineAvailable, subscribeNativeStatus, getNativeStatus } from "@/lib/nativeEngine";
 import { useToast } from "@/context/ToastContext";
 
 type UserInfo = {
@@ -25,7 +27,16 @@ export default function SettingsPage() {
   const [clearing, setClearing] = useState(false);
   const [streamQuality, setStreamQuality] = useStreamQuality();
   const [directMode, setDirectMode] = useDirectMode();
+  const [exclusiveMode, setExclusiveMode] = useExclusiveMode();
   const { showToast } = useToast();
+
+  // Only the desktop shell exposes the native WASAPI engine; the exclusive-mode
+  // controls are meaningless in a plain browser, so hide them there.
+  const [nativeReady, setNativeReady] = useState(false);
+  useEffect(() => { setNativeReady(nativeEngineAvailable()); }, []);
+  const nativeStatus = useSyncExternalStore(
+    subscribeNativeStatus, getNativeStatus, () => getNativeStatus(),
+  );
 
   useEffect(() => {
     getCurrentUserAction().then((u) => {
@@ -478,6 +489,72 @@ export default function SettingsPage() {
                 />
               </button>
             </div>
+
+            {/* Exclusive Mode (desktop native engine only) */}
+            {nativeReady && (
+              <>
+                <div style={{ height: "1px", background: "var(--border-subtle)", margin: "0 1rem" }} />
+                <div className="flex items-center justify-between px-4 py-4">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-9 h-9 rounded-xl flex items-center justify-center"
+                      style={{ background: "var(--bg-card)", color: "var(--text-secondary)" }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm3 8H9V7a3 3 0 0 1 6 0v3z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
+                        Exclusive Mode
+                      </p>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                        {exclusiveMode
+                          ? "Bit-perfect — Zenify takes sole control of the DAC, no resampling"
+                          : "Shared — mixed with other apps through the Windows mixer"}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setExclusiveMode(!exclusiveMode)}
+                    className="relative w-12 h-6 rounded-full transition-all duration-300 focus:outline-none"
+                    style={{
+                      background: exclusiveMode ? "var(--accent)" : "var(--bg-card-hover)",
+                      border: "1px solid var(--border-card)",
+                    }}
+                  >
+                    <span
+                      className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300"
+                      style={{ left: exclusiveMode ? "calc(100% - 1.375rem)" : "0.125rem" }}
+                    />
+                  </button>
+                </div>
+
+                {/* Live output status — what the DAC is actually being fed */}
+                {directMode && nativeStatus.mode && (
+                  <div className="px-4 pb-4 -mt-1">
+                    <div
+                      className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold"
+                      style={{
+                        background: nativeStatus.mode === "exclusive" ? "rgba(16,185,129,0.12)" : "var(--bg-card)",
+                        color: nativeStatus.mode === "exclusive" ? "#10b981" : "var(--text-muted)",
+                      }}
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full flex-shrink-0"
+                        style={{ background: nativeStatus.mode === "exclusive" ? "#10b981" : "#94a3b8" }}
+                      />
+                      <span>
+                        {nativeStatus.mode === "exclusive" ? "Exclusive" : "Shared"}
+                        {nativeStatus.sampleRate > 0 &&
+                          ` · ${nativeStatus.bits ? `${nativeStatus.bits}-bit ` : ""}${(nativeStatus.sampleRate / 1000).toFixed(1)} kHz`}
+                        {nativeStatus.mode === "shared" && exclusiveMode && " (DAC busy — exclusive unavailable)"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </section>
 
