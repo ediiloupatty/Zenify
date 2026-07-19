@@ -8,6 +8,7 @@ import { cleanTitle } from "@/lib/cleanTitle";
 import { isRenderingActive, onRenderingActiveChange } from "@/lib/renderGate";
 import { formatQualityLine } from "@/lib/formatSpecs";
 import { useStreamQuality, withQuality, type StreamQuality } from "@/lib/useStreamQuality";
+import { useDirectMode } from "@/lib/useDirectMode";
 import { saveDurationAction } from "@/app/admin/actions";
 import { CROSSFADE_SEC, type SleepMode, SLEEP_OPTIONS, formatTime } from "@/components/player/playerUtils";
 
@@ -102,6 +103,11 @@ export function useAudioEngine() {
     sleepMode, sleepLeftMs, showSleepMenu, crossfadePrevTrack
   } = state;
 
+  // Direct mode: skip the Web Audio graph and lock volume at 1.0 so decoded
+  // samples leave the element untouched (as close to bit-perfect as a browser
+  // allows — the OS shared-mode mixer is still downstream).
+  const [directMode] = useDirectMode();
+
   useEffect(() => {
     if ((window as { __ZENIFY_DESKTOP__?: boolean }).__ZENIFY_DESKTOP__) {
       dispatch({ type: "SET_DESKTOP_OFFSET", payload: 32 });
@@ -192,7 +198,7 @@ export function useAudioEngine() {
       g.gain.cancelScheduledValues(ctx.currentTime);
       g.gain.setValueAtTime(volume, ctx.currentTime);
     } else if (audioRef.current) {
-      audioRef.current.volume = volume;
+      audioRef.current.volume = directMode ? 1 : volume;
     }
   };
 
@@ -273,6 +279,10 @@ export function useAudioEngine() {
 
   // ── Audio context init ─────────────────────────────────────────────────────
   const initAudioContext = () => {
+    if (directMode) {
+      if (audioRef.current) audioRef.current.volume = 1;
+      return;
+    }
     if (!audioContextRef.current && audioRef.current) {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioContextClass) return;
@@ -296,6 +306,11 @@ export function useAudioEngine() {
       gain.connect(ctx.destination);
 
       audioRef.current.volume = 1;
+
+      // createMediaElementSource claims the element for the page's lifetime, so
+      // enabling direct mode from here on only applies after a reload — the
+      // settings toggle checks this flag to warn about that.
+      (window as { __zenifyAudioGraphActive?: boolean }).__zenifyAudioGraphActive = true;
     }
 
     if (audioContextRef.current?.state === "suspended") {
@@ -367,6 +382,7 @@ export function useAudioEngine() {
         !!upcoming[0]?.track || (repeatMode === "all" && tracks.length > 1);
       if (
         isPlaying &&
+        !directMode &&
         !crossfadingRef.current &&
         repeatMode !== "one" &&
         !sleepEndOfTrackRef.current &&
@@ -615,6 +631,10 @@ export function useAudioEngine() {
   const prevVolumeRef = useRef(volume || 0.8);
 
   const applyVolume = (v: number) => {
+    if (directMode) {
+      if (audioRef.current) audioRef.current.volume = 1;
+      return;
+    }
     const clamped = Math.min(1, Math.max(0, v));
     dispatch({ type: "SET_VOLUME", payload: clamped });
     if (typeof window !== "undefined") window.localStorage.setItem("player_volume", String(clamped));
@@ -623,9 +643,29 @@ export function useAudioEngine() {
   };
 
   useEffect(() => {
-    if (!gainNodeRef.current && audioRef.current) audioRef.current.volume = volume;
+    if (!gainNodeRef.current && audioRef.current) audioRef.current.volume = directMode ? 1 : volume;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Entering direct mode pins element volume and the slider at 100%; leaving it
+  // restores the saved volume. localStorage is left alone in both directions so
+  // the user's level survives a round-trip through direct mode.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (directMode) {
+      if (audio) audio.volume = 1;
+      // If the graph already claimed the element (toggled on before a reload),
+      // unity gain at least matches what the 100% slider now shows.
+      if (gainNodeRef.current) gainNodeRef.current.gain.value = 1;
+      dispatch({ type: "SET_VOLUME", payload: 1 });
+    } else {
+      const saved = parseFloat(window.localStorage.getItem("player_volume") || "");
+      const v = Number.isFinite(saved) ? Math.min(1, Math.max(0, saved)) : 0.8;
+      dispatch({ type: "SET_VOLUME", payload: v });
+      if (gainNodeRef.current) gainNodeRef.current.gain.value = v;
+      else if (audio) audio.volume = v;
+    }
+  }, [directMode]);
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     e.stopPropagation();
@@ -745,6 +785,7 @@ export function useAudioEngine() {
 
     // Stream quality
     streamQuality, setStreamQuality,
+    directMode,
 
     // Audio sources
     audioSrc, nextAudioSrc,
