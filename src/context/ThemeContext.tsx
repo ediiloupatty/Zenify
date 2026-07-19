@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { isRenderingActive, onRenderingActiveChange } from "@/lib/renderGate";
 
 // "auto" = decide from the device, "on" = always lite, "off" = always full glass.
 type PerfMode = "auto" | "on" | "off";
@@ -64,6 +65,33 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (liteActive) document.documentElement.setAttribute("data-perf", "lite");
     else document.documentElement.removeAttribute("data-perf");
   }, [liteActive]);
+
+  // Mark the document idle while the app is in the background (hidden tab, or a
+  // window that lost OS focus — see renderGate) so CSS can pause every
+  // animation: no animation means no repaints, so a backgrounded player costs
+  // almost nothing while the audio thread keeps playing. Going idle waits a
+  // couple of seconds to ride out brief focus changes; waking is instant so
+  // nothing ever looks frozen to the user.
+  useEffect(() => {
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const apply = () => {
+      if (isRenderingActive()) {
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+        document.documentElement.removeAttribute("data-render-idle");
+      } else if (!idleTimer) {
+        idleTimer = setTimeout(() => {
+          idleTimer = null;
+          document.documentElement.setAttribute("data-render-idle", "true");
+        }, 2000);
+      }
+    };
+    apply();
+    const stop = onRenderingActiveChange(apply);
+    return () => {
+      stop();
+      if (idleTimer) clearTimeout(idleTimer);
+    };
+  }, []);
 
   const setPerformanceMode = (m: PerfMode) => {
     setPerformanceModeState(m);

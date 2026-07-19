@@ -52,6 +52,7 @@ const (
 	nifIcon    = 0x02
 	nifTip     = 0x04
 	nifInfo    = 0x10
+	nifGUID    = 0x20
 
 	niifNone = 0x00
 
@@ -131,6 +132,28 @@ var (
 	preMiniRect rect
 )
 
+// trayGUID gives the icon one identity across processes. Without it, a copy that
+// dies without NIM_DELETE (Task Manager kill, crash, hard shutdown) leaves a
+// ghost icon behind, and the next launch registers a brand-new one — the
+// "two or more Zenify icons" effect. Any fixed random bytes work; the shell only
+// compares them.
+var trayGUID = [16]byte{
+	0x9d, 0x41, 0x8c, 0x2f, 0x6b, 0x7a, 0x4d, 0x03,
+	0xb2, 0x51, 0xe0, 0x9a, 0x77, 0x1c, 0x24, 0x68,
+}
+
+// trayGUIDMode records whether the icon was registered by GUID; every later
+// Shell_NotifyIcon call must then keep NIF_GUID set, or the shell would look the
+// icon up by (hwnd, uid) and miss.
+var trayGUIDMode bool
+
+func trayFlags(f uint32) uint32 {
+	if trayGUIDMode {
+		f |= nifGUID
+	}
+	return f
+}
+
 // ─── Tray icon ──────────────────────────────────────────────────────────────
 
 func trayInit(hwnd uintptr) {
@@ -150,7 +173,27 @@ func trayInit(hwnd uintptr) {
 	trayData.CbSize = uint32(unsafe.Sizeof(trayData))
 	setTip(&trayData, "Zenify")
 
+	trayData.GuidItem = trayGUID
+	trayData.UFlags |= nifGUID
+	trayGUIDMode = true
+
 	r, _, _ := pShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&trayData)))
+	if r == 0 {
+		// A stale registration (a ghost icon from a killed copy) still owns the
+		// GUID — delete it, then take its place.
+		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&trayData)))
+		r, _, _ = pShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&trayData)))
+	}
+	if r == 0 {
+		// The shell ties a GUID to the exe's path, so a build run from a different
+		// folder (dev tree vs installed copy) can be refused even after the delete.
+		// Losing the tray entirely is worse than losing dedupe: fall back to the
+		// plain (hwnd, uid) identity.
+		trayGUIDMode = false
+		trayData.GuidItem = [16]byte{}
+		trayData.UFlags &^= nifGUID
+		r, _, _ = pShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&trayData)))
+	}
 	trayActive = r != 0
 }
 
@@ -158,6 +201,7 @@ func trayRemove() {
 	if !trayActive {
 		return
 	}
+	trayData.UFlags = trayFlags(0)
 	pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&trayData)))
 	trayActive = false
 }
@@ -179,7 +223,7 @@ func trayUpdate(p presence, notify bool) {
 		}
 	}
 	setTip(&trayData, label)
-	trayData.UFlags = nifMessage | nifIcon | nifTip
+	trayData.UFlags = trayFlags(nifMessage | nifIcon | nifTip)
 	pShellNotifyIcon.Call(nimModify, uintptr(unsafe.Pointer(&trayData)))
 
 	if !notify || p.Title == "" {
@@ -197,7 +241,24 @@ func trayUpdate(p presence, notify bool) {
 	}
 	setInfo(&trayData, body)
 	trayData.DwInfoFlags = niifNone
-	trayData.UFlags = nifInfo
+	trayData.UFlags = trayFlags(nifInfo)
+	pShellNotifyIcon.Call(nimModify, uintptr(unsafe.Pointer(&trayData)))
+}
+
+// trayNotifyHidden pops a balloon the first time the window is closed to the
+// tray in this run, so "X" leaving the music playing reads as a feature instead
+// of a bug. Once is enough — repeating it on every close would be nagging.
+var hiddenHintShown bool
+
+func trayNotifyHidden() {
+	if !trayActive || hiddenHintShown {
+		return
+	}
+	hiddenHintShown = true
+	setInfoTitle(&trayData, "Zenify masih berjalan")
+	setInfo(&trayData, "Musik tetap diputar dari tray. Klik kanan ikon Zenify → \"Keluar\" untuk menutup sepenuhnya.")
+	trayData.DwInfoFlags = niifNone
+	trayData.UFlags = trayFlags(nifInfo)
 	pShellNotifyIcon.Call(nimModify, uintptr(unsafe.Pointer(&trayData)))
 }
 

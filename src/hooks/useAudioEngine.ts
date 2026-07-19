@@ -8,6 +8,7 @@ import { cleanTitle } from "@/lib/cleanTitle";
 import { isRenderingActive, onRenderingActiveChange } from "@/lib/renderGate";
 import { formatQualityLine } from "@/lib/formatSpecs";
 import { useStreamQuality, withQuality, type StreamQuality } from "@/lib/useStreamQuality";
+import { useDirectMode } from "@/lib/useDirectMode";
 import { saveDurationAction } from "@/app/admin/actions";
 import { CROSSFADE_SEC, type SleepMode, SLEEP_OPTIONS, formatTime } from "@/components/player/playerUtils";
 
@@ -102,6 +103,11 @@ export function useAudioEngine() {
     sleepMode, sleepLeftMs, showSleepMenu, crossfadePrevTrack
   } = state;
 
+  // Direct mode: skip the Web Audio graph and lock volume at 1.0 so decoded
+  // samples leave the element untouched (as close to bit-perfect as a browser
+  // allows — the OS shared-mode mixer is still downstream).
+  const [directMode] = useDirectMode();
+
   useEffect(() => {
     if ((window as { __ZENIFY_DESKTOP__?: boolean }).__ZENIFY_DESKTOP__) {
       dispatch({ type: "SET_DESKTOP_OFFSET", payload: 32 });
@@ -140,7 +146,10 @@ export function useAudioEngine() {
         audioRef.current?.pause();
         setIsPlaying(false);
         showToast("Sleep timer ended — playback paused", "info");
-      } else {
+      } else if (isRenderingActive()) {
+        // The countdown display is pure UI — skip the per-second re-render
+        // while the app is in the background. The deadline check above still
+        // runs every tick, so the timer itself never drifts.
         dispatch({ type: "SET_SLEEP_LEFT", payload: left });
       }
     }, 1000);
@@ -192,7 +201,7 @@ export function useAudioEngine() {
       g.gain.cancelScheduledValues(ctx.currentTime);
       g.gain.setValueAtTime(volume, ctx.currentTime);
     } else if (audioRef.current) {
-      audioRef.current.volume = volume;
+      audioRef.current.volume = directMode ? 1 : volume;
     }
   };
 
@@ -273,6 +282,10 @@ export function useAudioEngine() {
 
   // ── Audio context init ─────────────────────────────────────────────────────
   const initAudioContext = () => {
+    if (directMode) {
+      if (audioRef.current) audioRef.current.volume = 1;
+      return;
+    }
     if (!audioContextRef.current && audioRef.current) {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioContextClass) return;
@@ -296,6 +309,11 @@ export function useAudioEngine() {
       gain.connect(ctx.destination);
 
       audioRef.current.volume = 1;
+
+      // createMediaElementSource claims the element for the page's lifetime, so
+      // enabling direct mode from here on only applies after a reload — the
+      // settings toggle checks this flag to warn about that.
+      (window as { __zenifyAudioGraphActive?: boolean }).__zenifyAudioGraphActive = true;
     }
 
     if (audioContextRef.current?.state === "suspended") {
@@ -367,6 +385,7 @@ export function useAudioEngine() {
         !!upcoming[0]?.track || (repeatMode === "all" && tracks.length > 1);
       if (
         isPlaying &&
+        !directMode &&
         !crossfadingRef.current &&
         repeatMode !== "one" &&
         !sleepEndOfTrackRef.current &&
@@ -535,6 +554,18 @@ export function useAudioEngine() {
   // ── Stream quality ─────────────────────────────────────────────────────────
   const [streamQuality, setStreamQuality] = useStreamQuality();
 
+  // Direct mode streams the original file regardless of the saved quality —
+  // an untouched output path is pointless when it's fed a lossy transcode. The
+  // saved preference is left alone so it comes back when direct mode goes off.
+  const effectiveQuality: StreamQuality = directMode ? "lossless" : streamQuality;
+
+  const chooseStreamQuality = (q: StreamQuality) => {
+    if (directMode && q !== "lossless") {
+      showToast("Direct Mode always streams the original file", "info");
+    }
+    setStreamQuality(q);
+  };
+
   // ── Discord Rich Presence bridge ───────────────────────────────────────────
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -545,7 +576,7 @@ export function useAudioEngine() {
           title: cleanTitle(currentTrack.title),
           artist: currentTrack.artist || currentTrack.category || "",
           album: currentTrack.album || "",
-          quality: formatQualityLine(currentTrack, streamQuality) || "",
+          quality: formatQualityLine(currentTrack, effectiveQuality) || "",
           cover: currentTrack.cover_url
             ? new URL(currentTrack.cover_url, window.location.origin).href
             : "",
@@ -557,7 +588,7 @@ export function useAudioEngine() {
       : { id: "", title: "", artist: "", album: "", quality: "", cover: "", state: "stopped", position: 0, duration: 0, appUrl: "" };
     window.dispatchEvent(new CustomEvent("zenify:nowplaying", { detail }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTrack?.id, isPlaying, streamQuality]);
+  }, [currentTrack?.id, isPlaying, effectiveQuality]);
 
   // ── Media Session ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -615,6 +646,10 @@ export function useAudioEngine() {
   const prevVolumeRef = useRef(volume || 0.8);
 
   const applyVolume = (v: number) => {
+    if (directMode) {
+      if (audioRef.current) audioRef.current.volume = 1;
+      return;
+    }
     const clamped = Math.min(1, Math.max(0, v));
     dispatch({ type: "SET_VOLUME", payload: clamped });
     if (typeof window !== "undefined") window.localStorage.setItem("player_volume", String(clamped));
@@ -623,9 +658,29 @@ export function useAudioEngine() {
   };
 
   useEffect(() => {
-    if (!gainNodeRef.current && audioRef.current) audioRef.current.volume = volume;
+    if (!gainNodeRef.current && audioRef.current) audioRef.current.volume = directMode ? 1 : volume;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Entering direct mode pins element volume and the slider at 100%; leaving it
+  // restores the saved volume. localStorage is left alone in both directions so
+  // the user's level survives a round-trip through direct mode.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (directMode) {
+      if (audio) audio.volume = 1;
+      // If the graph already claimed the element (toggled on before a reload),
+      // unity gain at least matches what the 100% slider now shows.
+      if (gainNodeRef.current) gainNodeRef.current.gain.value = 1;
+      dispatch({ type: "SET_VOLUME", payload: 1 });
+    } else {
+      const saved = parseFloat(window.localStorage.getItem("player_volume") || "");
+      const v = Number.isFinite(saved) ? Math.min(1, Math.max(0, saved)) : 0.8;
+      dispatch({ type: "SET_VOLUME", payload: v });
+      if (gainNodeRef.current) gainNodeRef.current.gain.value = v;
+      else if (audio) audio.volume = v;
+    }
+  }, [directMode]);
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     e.stopPropagation();
@@ -706,7 +761,7 @@ export function useAudioEngine() {
     rawUrl.includes(".r2.dev/")
       ? `/api/audio/${rawUrl.split(".r2.dev/").pop()}`
       : rawUrl,
-    streamQuality
+    effectiveQuality
   );
 
   const nextTrack = upcoming[0]?.track;
@@ -715,7 +770,7 @@ export function useAudioEngine() {
     nextRawUrl.includes(".r2.dev/")
       ? `/api/audio/${nextRawUrl.split(".r2.dev/").pop()}`
       : nextRawUrl,
-    streamQuality
+    effectiveQuality
   );
 
   const progressPercent = duration ? (progress / duration) * 100 : 0;
@@ -743,8 +798,10 @@ export function useAudioEngine() {
     sleepMode, sleepLeftMs, showSleepMenu, sleepMenuRef,
     chooseSleep, setShowSleepMenu: (v: boolean) => dispatch({ type: "SET_SHOW_SLEEP_MENU", payload: v }),
 
-    // Stream quality
-    streamQuality, setStreamQuality,
+    // Stream quality — the badge shows what actually plays (direct mode forces
+    // the original), and the picker warns when a lossy choice won't take effect.
+    streamQuality: effectiveQuality, setStreamQuality: chooseStreamQuality,
+    directMode,
 
     // Audio sources
     audioSrc, nextAudioSrc,

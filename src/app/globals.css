@@ -162,6 +162,21 @@
 }
 
 /* ═══════════════════════════════════════════════════════════
+   BACKGROUND IDLE
+═══════════════════════════════════════════════════════════ */
+/* While the app is in the background (hidden tab or unfocused window —
+   ThemeContext toggles [data-render-idle] from renderGate), pause every CSS
+   animation. No animation → no repaints → the compositor goes idle, so the
+   backgrounded player costs almost nothing while audio keeps playing. The
+   attribute clears the instant the user comes back and everything resumes
+   mid-animation. Transitions are untouched — they only fire on interaction. */
+[data-render-idle] *,
+[data-render-idle] *::before,
+[data-render-idle] *::after {
+  animation-play-state: paused !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
    ACCESSIBILITY
 ═══════════════════════════════════════════════════════════ */
 /* Visible keyboard focus ring (mouse clicks don't trigger :focus-visible, so
