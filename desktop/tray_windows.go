@@ -395,6 +395,7 @@ func keepMiniOnTop(hwnd uintptr, stop <-chan struct{}) {
 // tell the page to swap its layout.
 func winToggleMini(hwnd uintptr) bool {
 	if isMini {
+		setMiniTranslucent(hwnd, false) // back to solid before isMini clears
 		isMini = false // clear first: WM_GETMINMAXINFO fires during SetWindowPos
 		if miniTopmostStop != nil {
 			close(miniTopmostStop)
@@ -430,6 +431,9 @@ func winToggleMini(hwnd uintptr) bool {
 		uintptr(wa.Right-w-margin), uintptr(wa.Bottom-h-margin),
 		uintptr(w), uintptr(h),
 		swpFrameChange|swpShowWindow)
+
+	// Make the overlay see-through so it doesn't block the view behind it.
+	setMiniTranslucent(hwnd, true)
 
 	// Keep re-pinning it on top so a fullscreen-ish game can't bury it.
 	miniTopmostStop = make(chan struct{})
