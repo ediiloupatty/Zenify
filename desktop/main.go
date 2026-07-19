@@ -47,6 +47,11 @@ const assetLogo = "zenify_logo" // large image / fallback cover
 // low-level ipc package (the handshake still goes through client.Login).
 const activityTypeListening = 2
 
+// status_display_type picks what the member list shows next to the ♫ icon:
+// 0 = app name ("Zenify"), 1 = state (artist), 2 = details (track title).
+// Spotify shows the track title there, so we mirror that with 2.
+const statusDisplayDetails = 2
+
 type dcFrame struct {
 	Cmd   string `json:"cmd"`
 	Args  dcArgs `json:"args"`
@@ -57,12 +62,13 @@ type dcArgs struct {
 	Activity *dcActivity `json:"activity"`
 }
 type dcActivity struct {
-	Type       int           `json:"type"`
-	Details    string        `json:"details,omitempty"`
-	State      string        `json:"state,omitempty"`
-	Assets     dcAssets      `json:"assets,omitempty"`
-	Timestamps *dcTimestamps `json:"timestamps,omitempty"`
-	Buttons    []dcButton    `json:"buttons,omitempty"`
+	Type              int           `json:"type"`
+	StatusDisplayType int           `json:"status_display_type"`
+	Details           string        `json:"details,omitempty"`
+	State             string        `json:"state,omitempty"`
+	Assets            dcAssets      `json:"assets,omitempty"`
+	Timestamps        *dcTimestamps `json:"timestamps,omitempty"`
+	Buttons           []dcButton    `json:"buttons,omitempty"`
 }
 type dcAssets struct {
 	LargeImage string `json:"large_image,omitempty"`
@@ -187,6 +193,7 @@ func main() {
 	w.Bind("winClose", func() {
 		saveWindowState(hwnd)
 		winHideToTray(hwnd)
+		trayNotifyHidden()
 	})
 
 	// Swap between the full window and the compact always-on-top mini player,
@@ -345,8 +352,11 @@ func buildActivity(p presence) *dcActivity {
 	// most of them, so neither can fill it. The audio quality can: it's populated
 	// for nearly every track, and it's the one thing Spotify's card cannot say.
 	act := &dcActivity{
-		Type:    activityTypeListening,
-		Details: clamp(p.Title),
+		Type: activityTypeListening,
+		// Show the track title (details) in the member list, like Spotify does,
+		// instead of the app name.
+		StatusDisplayType: statusDisplayDetails,
+		Details:           clamp(p.Title),
 		Assets: dcAssets{
 			LargeImage: large,
 			LargeText:  clamp(p.Quality),
