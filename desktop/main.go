@@ -208,6 +208,22 @@ func main() {
 	w.Bind("winToggleMini", func() { toggleMini() })
 	w.Bind("winIsMini", func() bool { return winIsMini() })
 
+	// Native audio engine (Direct Mode on desktop): the page drives playback
+	// through these bindings and hears back via zenify:native CustomEvents.
+	// Events must cross onto the UI thread before touching the webview.
+	eng := newAudioEngine(func(js string) {
+		w.Dispatch(func() { w.Eval(js) })
+	})
+	w.Bind("nativeLoad", func(url string) { eng.Load(url) })
+	w.Bind("nativePlay", func() { eng.Play() })
+	w.Bind("nativePause", func() { eng.Pause() })
+	w.Bind("nativeSeek", func(sec float64) { eng.Seek(sec) })
+	w.Bind("nativeStop", func() { eng.Stop() })
+	w.Bind("nativeSetExclusive", func(on bool) { eng.SetExclusive(on) })
+	w.Bind("nativePrefetch", func(url string) { eng.Prefetch(url) })
+	w.Bind("nativeClearCache", func() { eng.ClearCache() })
+	w.Bind("nativeCacheStats", func() cacheStats { return eng.CacheStats() })
+
 	// Exposed to the page as window.zenifyPresence(detail). webview unmarshals the
 	// JS object argument straight into our struct. We hand off without blocking.
 	lastTrackID := ""
@@ -253,6 +269,7 @@ func main() {
 					toggleMini()
 				case "quit":
 					quitting = true
+					eng.Stop() // release the audio device before the window dies
 					saveWindowState(hwnd)
 					trayRemove()
 					w.Terminate()
