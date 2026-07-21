@@ -187,44 +187,59 @@ window.__zenifyClick = function (action) {
   function injectMini(){
     if (!document.body || document.getElementById('zenify-mini')) return;
 
+    // Frosted dark glass. The window itself is set semi-transparent by the Go
+    // side (LWA_ALPHA) so a game behind shows through; this panel is the tinted,
+    // blurred glass over it. Cover/text/buttons stay high-contrast so they read
+    // as solid even while the whole overlay is see-through.
     var m = document.createElement('div');
     m.id = 'zenify-mini';
-    m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:none;align-items:center;gap:11px;padding:12px;background:#0a0c11;color:#e2e8f0;font-family:system-ui,Segoe UI,sans-serif;user-select:none;box-sizing:border-box';
+    // Light, low-opacity frosted glass rather than a solid dark box: most of the
+    // panel is translucent so the window's see-through (set by the Go side) reads
+    // as glass. A faint slate tint + blur keeps it a "material" without going
+    // black. Cover/text/buttons below stay high-contrast so they still read.
+    m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:none;align-items:center;gap:13px;padding:13px 15px;box-sizing:border-box;' +
+      'background:transparent;' +
+      'color:#e2e8f0;font-family:system-ui,Segoe UI,sans-serif;user-select:none';
     m.onmousedown = function(){ call('winDragStart'); };
+    // Hover → fully opaque (crisp to read & click); leave → back to see-through.
+    m.onmouseenter = function(){ try { window.winMiniHover(true); } catch (_) {} };
+    m.onmouseleave = function(){ try { window.winMiniHover(false); } catch (_) {} };
 
     var cover = document.createElement('div');
     cover.id = 'zenify-mini-cover';
-    cover.style.cssText = 'width:84px;height:84px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,#134e4a,#1e293b);background-size:cover;background-position:center;box-shadow:0 6px 18px rgba(0,0,0,.5)';
+    cover.style.cssText = 'width:78px;height:78px;border-radius:12px;flex-shrink:0;background:linear-gradient(135deg,#134e4a,#1e293b);background-size:cover;background-position:center;box-shadow:0 8px 22px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.10)';
 
     var col = document.createElement('div');
-    col.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:3px';
+    col.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px';
 
     var title = document.createElement('div');
     title.id = 'zenify-mini-title';
-    title.style.cssText = 'font-size:13px;font-weight:700;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    // Strong layered shadow so white text stays legible over a bright game
+    // showing through the transparent panel.
+    title.style.cssText = 'font-size:14px;font-weight:800;letter-spacing:-.01em;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.7)';
     title.textContent = 'Zenify';
 
     var artist = document.createElement('div');
     artist.id = 'zenify-mini-artist';
-    artist.style.cssText = 'font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    artist.style.cssText = 'font-size:12px;font-weight:600;color:#dbe3ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 6px rgba(0,0,0,.6)';
 
     var ctrls = document.createElement('div');
-    ctrls.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px';
+    ctrls.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:7px';
 
     function tbtn(svg, fn, big){
       var b = document.createElement('button');
-      var size = big ? 30 : 26;
-      b.style.cssText = 'width:' + size + 'px;height:' + size + 'px;display:flex;align-items:center;justify-content:center;border:0;border-radius:50%;cursor:default;color:' + (big ? '#042f2e' : '#cbd5e1') + ';background:' + (big ? '#14b8a6' : 'transparent') + ';transition:background .15s,color .15s;padding:0';
+      var size = big ? 32 : 28;
+      b.style.cssText = 'width:' + size + 'px;height:' + size + 'px;display:flex;align-items:center;justify-content:center;border:0;border-radius:50%;cursor:default;color:' + (big ? '#042f2e' : '#e2e8f0') + ';background:' + (big ? '#14b8a6' : 'rgba(255,255,255,.08)') + ';transition:background .15s,color .15s,transform .1s;padding:0;' + (big ? 'box-shadow:0 4px 14px rgba(20,184,166,.45)' : '');
       b.innerHTML = svg;
       b.onmousedown = function(e){ e.stopPropagation(); };
-      b.onmouseenter = function(){ if (!big) { b.style.background = 'rgba(255,255,255,.1)'; b.style.color = '#fff'; } };
-      b.onmouseleave = function(){ if (!big) { b.style.background = 'transparent'; b.style.color = '#cbd5e1'; } };
+      b.onmouseenter = function(){ if (big) { b.style.background = '#2dd4bf'; } else { b.style.background = 'rgba(255,255,255,.18)'; b.style.color = '#fff'; } };
+      b.onmouseleave = function(){ if (big) { b.style.background = '#14b8a6'; } else { b.style.background = 'rgba(255,255,255,.08)'; b.style.color = '#e2e8f0'; } };
       b.onclick = function(e){ e.stopPropagation(); fn(); };
       return b;
     }
 
-    var prevSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>';
-    var nextSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>';
+    var prevSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>';
+    var nextSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>';
 
     var play = tbtn('', function(){ window.__zenifyClick('play-pause'); }, true);
     play.id = 'zenify-mini-play';
@@ -237,19 +252,29 @@ window.__zenifyClick = function (action) {
     col.appendChild(artist);
     col.appendChild(ctrls);
 
+    // Top-right window controls: minimize (to taskbar) + expand (back to full).
+    function cbtn(svg, tip, fn){
+      var b = document.createElement('button');
+      b.style.cssText = 'width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:0;border-radius:7px;color:#94a3b8;cursor:default;padding:0;transition:background .15s,color .15s';
+      b.title = tip;
+      b.innerHTML = svg;
+      b.onmousedown = function(e){ e.stopPropagation(); };
+      b.onmouseenter = function(){ b.style.background = 'rgba(255,255,255,.16)'; b.style.color = '#fff'; };
+      b.onmouseleave = function(){ b.style.background = 'rgba(255,255,255,.06)'; b.style.color = '#94a3b8'; };
+      b.onclick = function(e){ e.stopPropagation(); fn(); };
+      return b;
+    }
+    var minimizeSvg = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="2.5" y1="6" x2="9.5" y2="6"/></svg>';
     var expandSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
-    var expand = document.createElement('button');
-    expand.style.cssText = 'position:absolute;top:8px;right:8px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;border-radius:6px;color:#64748b;cursor:default;padding:0';
-    expand.title = 'Kembali ke jendela penuh';
-    expand.innerHTML = expandSvg;
-    expand.onmousedown = function(e){ e.stopPropagation(); };
-    expand.onmouseenter = function(){ expand.style.background = 'rgba(255,255,255,.1)'; expand.style.color = '#fff'; };
-    expand.onmouseleave = function(){ expand.style.background = 'transparent'; expand.style.color = '#64748b'; };
-    expand.onclick = function(e){ e.stopPropagation(); call('winToggleMini'); };
+
+    var winctrls = document.createElement('div');
+    winctrls.style.cssText = 'position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:5px';
+    winctrls.appendChild(cbtn(minimizeSvg, 'Minimize', function(){ call('winMinimize'); }));
+    winctrls.appendChild(cbtn(expandSvg, 'Kembali ke jendela penuh', function(){ call('winToggleMini'); }));
 
     m.appendChild(cover);
     m.appendChild(col);
-    m.appendChild(expand);
+    m.appendChild(winctrls);
     document.body.appendChild(m);
 
     window.__zenifyRenderMini();

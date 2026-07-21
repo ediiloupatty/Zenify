@@ -32,10 +32,21 @@ var (
 	pSetProcessDpiAwarenessCtx = user32.NewProc("SetProcessDpiAwarenessContext")
 	pGetModuleHandle           = syscall.NewLazyDLL("kernel32.dll").NewProc("GetModuleHandleW")
 	pDwmSetWindowAttr          = syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
+	pSetLayeredWinAttr         = user32.NewProc("SetLayeredWindowAttributes")
 )
 
 const (
-	gwlpWndProc = ^uintptr(3) // -4  GWL_WNDPROC
+	gwlpWndProc = ^uintptr(3)  // -4   GWL_WNDPROC
+	gwlExStyle  = ^uintptr(19) // -20  GWL_EXSTYLE
+
+	wsExLayered = 0x00080000 // WS_EX_LAYERED — required for per-window alpha
+	lwaAlpha    = 0x00000002 // LWA_ALPHA — the whole window fades uniformly
+
+	// Mini-player opacity: see-through while idle so a game behind stays visible,
+	// fully opaque on hover so it's crisp to read and click. Low idle value =
+	// strongly transparent (the panel reads as glass, not a solid box).
+	miniAlphaIdle  = 150 // ~59%
+	miniAlphaHover = 255
 
 	swpNoSize      = 0x0001
 	swpNoZorder    = 0x0004
@@ -151,6 +162,31 @@ func setWindowIcon(hwnd uintptr) {
 func hideOffscreen(hwnd uintptr) {
 	pGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&revealRect)))
 	pSetWindowPos.Call(hwnd, 0, offscreen, offscreen, 0, 0, swpNoSize|swpNoZorder|swpNoActivate)
+}
+
+// setMiniTranslucent turns the whole window semi-transparent (mini player) or
+// solid again. WS_EX_LAYERED + LWA_ALPHA fades every pixel uniformly, so a game
+// behind the overlay shows through while it idles. Whether WebView2's composited
+// output honours the alpha depends on the Windows build; if it doesn't, the
+// window simply stays opaque — no breakage, just no see-through.
+func setMiniTranslucent(hwnd uintptr, on bool) {
+	ex, _, _ := pGetWindowLong.Call(hwnd, gwlExStyle)
+	if on {
+		pSetWindowLong.Call(hwnd, gwlExStyle, ex|wsExLayered)
+		setMiniAlpha(hwnd, miniAlphaIdle)
+	} else {
+		pSetWindowLong.Call(hwnd, gwlExStyle, ex&^wsExLayered)
+	}
+}
+
+// setMiniAlpha adjusts the mini window's opacity (0–255). No-op unless the
+// window is currently layered (i.e. in mini mode), so a stray hover event while
+// full-size can't accidentally fade the main window.
+func setMiniAlpha(hwnd uintptr, a byte) {
+	if !isMini {
+		return
+	}
+	pSetLayeredWinAttr.Call(hwnd, 0, uintptr(a), lwaAlpha)
 }
 
 // parkDuringInit moves the webview window off-screen the moment it is created,

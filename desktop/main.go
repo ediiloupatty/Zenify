@@ -208,6 +208,16 @@ func main() {
 	w.Bind("winToggleMini", func() { toggleMini() })
 	w.Bind("winIsMini", func() bool { return winIsMini() })
 
+	// The mini overlay bumps to full opacity while hovered (readable/clickable)
+	// and fades back when the pointer leaves (see-through over a game).
+	w.Bind("winMiniHover", func(over bool) {
+		a := byte(miniAlphaIdle)
+		if over {
+			a = miniAlphaHover
+		}
+		setMiniAlpha(hwnd, a)
+	})
+
 	// Native audio engine (Direct Mode on desktop): the page drives playback
 	// through these bindings and hears back via zenify:native CustomEvents.
 	// Events must cross onto the UI thread before touching the webview.

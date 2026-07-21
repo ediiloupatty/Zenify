@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import useSWR from "swr";
 import Link from "next/link";
-import { uploadTrackAction, deleteTrackAction, updateTrackAction, recleanAllTitlesAction, backfillAudioSpecsAction, compressAllCoversAction, backfillMissingCoversAction, backfillMissingArtistImagesAction } from "./actions";
+import { createAudioUploadUrl, finalizeTrackUpload, deleteTrackAction, updateTrackAction, recleanAllTitlesAction, backfillAudioSpecsAction, compressAllCoversAction, backfillMissingCoversAction, backfillMissingArtistImagesAction } from "./actions";
 import { cleanTitle } from "@/lib/cleanTitle";
 import AlbumManager from "@/components/AlbumManager";
 import ArtistManager from "@/components/ArtistManager";
@@ -356,12 +356,34 @@ export default function AdminPage() {
     for (let i = 0; i < selectedFiles.length; i++) {
       const file = selectedFiles[i];
       const rawName = file.name.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
-      const fd = new FormData();
-      fd.append("title", rawName);
-      fd.append("category", categoryInput.trim());
-      fd.append("file", file);
       setUploadProgress({ current: i + 1, total: selectedFiles.length });
-      const res = await uploadTrackAction(fd);
+      // Two-step upload: the file goes STRAIGHT to R2 via a presigned PUT (so it
+      // never passes through the Server Action, which Vercel caps at ~4.5MB and
+      // 413s), then a tiny finalize call writes the DB row.
+      const res = await (async () => {
+        const created = await createAudioUploadUrl(file.name, file.type);
+        if (!created.success || !created.url || !created.key) {
+          return { success: false, error: created.error };
+        }
+        try {
+          const put = await fetch(created.url, {
+            method: "PUT",
+            body: file,
+            headers: { "Content-Type": created.contentType || file.type || "application/octet-stream" },
+          });
+          if (!put.ok) {
+            return { success: false, error: `Storage upload failed (${put.status})` };
+          }
+        } catch (e: any) {
+          return { success: false, error: e?.message || "Storage upload failed" };
+        }
+        return await finalizeTrackUpload({
+          key: created.key,
+          originalName: file.name,
+          title: rawName,
+          category: categoryInput.trim(),
+        });
+      })();
       if (res.success) ok++;
       else if ((res as any).duplicate) dup++;
       else fail++;
