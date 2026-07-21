@@ -198,9 +198,7 @@ window.__zenifyClick = function (action) {
     // as glass. A faint slate tint + blur keeps it a "material" without going
     // black. Cover/text/buttons below stay high-contrast so they still read.
     m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:none;align-items:center;gap:13px;padding:13px 15px;box-sizing:border-box;' +
-      'background:linear-gradient(135deg,rgba(40,52,72,0.30) 0%,rgba(20,26,38,0.38) 100%);' +
-      'backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);' +
-      'box-shadow:inset 0 0 0 1px rgba(255,255,255,0.10),inset 0 1px 0 rgba(255,255,255,0.08);' +
+      'background:transparent;' +
       'color:#e2e8f0;font-family:system-ui,Segoe UI,sans-serif;user-select:none';
     m.onmousedown = function(){ call('winDragStart'); };
     // Hover → fully opaque (crisp to read & click); leave → back to see-through.
