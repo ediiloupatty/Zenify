@@ -1,9 +1,12 @@
 ; Inno Setup script — builds the Zenify installer (Output\ZenifySetup.exe).
 ;
-; SEBELUM compile:
-;   1) build exe produksi dulu dari CMD di folder desktop:
-;        release.bat https://www.zenify.cc/player
-;   2) buka file ini di Inno Setup -> Build -> Compile (Ctrl+F9)
+; CARA PAKAI: buka file ini di Inno Setup -> Compile (Ctrl+F9). Itu saja.
+; Blok #ifndef di bawah otomatis me-rebuild zenify-desktop.exe (dengan URL
+; produksi ter-bake) SEBELUM packaging, jadi installer tak akan pernah membungkus
+; exe basi. Kalau build exe gagal, compile ikut dibatalkan (bukan diam-diam pakai
+; exe lama). Prasyarat: Go, gcc (mingw), dan windres ada di PATH.
+;
+; (build.bat memanggil ISCC dengan /DSKIP_EXE_BUILD supaya exe tak di-build 2x.)
 ;
 ; Hasil: Output\ZenifySetup.exe  — itu yang dibagikan ke orang lain.
 
@@ -11,6 +14,15 @@
 #define MyAppVersion "1.1.0"
 #define MyAppPublisher "Edii Loupatty"
 #define MyAppExeName "zenify-desktop.exe"
+
+; ── Auto-build the exe before compiling (skipped when build.bat already did it) ─
+; Absolute path via SourcePath: cmd.exe won't resolve a bare batch name from the
+; working dir, so build_exe.bat must be called by its full path.
+#ifndef SKIP_EXE_BUILD
+  #if Exec("cmd.exe", "/C call """ + SourcePath + "build_exe.bat""", SourcePath) != 0
+    #error Gagal build zenify-desktop.exe. Pastikan Go, gcc (mingw), dan windres ada di PATH, lalu Compile ulang.
+  #endif
+#endif
 
 [Setup]
 AppId={{B7E3F1C2-9A4D-4E6B-8F12-5A7C9E2D4F01}
