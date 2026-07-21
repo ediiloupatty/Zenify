@@ -1,6 +1,7 @@
 "use server";
 
 import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2Client, queryD1, initializeD1Tables } from "@/lib/cloudflare";
 import { revalidatePath, revalidateTag } from "next/cache";
 import * as mm from "music-metadata";
@@ -60,23 +61,71 @@ async function compressCoverImage(input: Buffer | Uint8Array): Promise<Buffer> {
     .toBuffer();
 }
 
-export async function uploadTrackAction(formData: FormData) {
+// ─── Direct-to-R2 upload (bypasses Vercel's ~4.5MB Server Action body limit) ──
+// Sending the audio file *through* a Server Action 413s on Vercel: the platform
+// rejects any request body over ~4.5MB before it even reaches the function, and
+// next.config's `bodySizeLimit` can't raise a platform limit. So the browser
+// uploads the bytes straight to R2 with a presigned PUT (createAudioUploadUrl),
+// then calls finalizeTrackUpload with just the object key + title + category —
+// tiny payloads that sail under the limit. NOTE: the R2 bucket's CORS policy
+// must allow PUT (and the Content-Type header) from this app's origin, or the
+// browser PUT fails with a CORS error.
+
+export async function createAudioUploadUrl(
+  filename: string,
+  browserType: string
+): Promise<{ success: boolean; url?: string; key?: string; contentType?: string; error?: string }> {
   await assertAdmin();
   try {
-    // 1. Get form data
-    const title = formData.get("title") as string;
-    const category = formData.get("category") as string;
-    const file = formData.get("file") as File;
-    // When the user explicitly confirms, allow re-uploading a known duplicate.
-    const allowDuplicate = formData.get("allowDuplicate") === "true";
-
-    if (!title || !category || !file || file.size === 0) {
-      return { success: false, error: "Missing required fields" };
-    }
-
     const bucketName = process.env.R2_BUCKET_NAME || "zenify";
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const dot = filename.lastIndexOf(".");
+    const ext = dot !== -1 ? filename.slice(dot) : "";
+    const key = `${Date.now()}-${Math.random().toString(36).substring(7)}${ext}`;
+    // Signed Content-Type: the browser MUST send back exactly this value on the
+    // PUT, or SigV4 rejects it. Returned so the client can echo it verbatim.
+    const contentType = resolveAudioMime(filename, browserType);
+    const url = await getSignedUrl(
+      r2Client,
+      new PutObjectCommand({ Bucket: bucketName, Key: key, ContentType: contentType }),
+      { expiresIn: 600 }
+    );
+    return { success: true, url, key, contentType };
+  } catch (error: any) {
+    console.error("Create upload URL error:", error);
+    return { success: false, error: error.message || "Failed to create upload URL" };
+  }
+}
+
+// Finalize a track whose audio the browser already PUT to R2 at `key`. Pulls the
+// bytes back once (server→R2 GET, not subject to the inbound limit) to extract
+// tags + embedded art, dedupes, resolves a cover, and writes the D1 row. On a
+// duplicate it deletes the just-uploaded object so no orphan is left behind.
+export async function finalizeTrackUpload(input: {
+  key: string;
+  originalName: string;
+  title: string;
+  category: string;
+  allowDuplicate?: boolean;
+}) {
+  await assertAdmin();
+  const bucketName = process.env.R2_BUCKET_NAME || "zenify";
+  const { key, originalName, title, category } = input;
+  const allowDuplicate = !!input.allowDuplicate;
+
+  if (!title || !category || !key) {
+    return { success: false, error: "Missing required fields" };
+  }
+
+  try {
+    // 1. Pull the uploaded bytes back from R2 to read metadata + embedded art.
+    const obj = await r2Client.send(
+      new GetObjectCommand({ Bucket: bucketName, Key: key })
+    );
+    if (!obj.Body) {
+      return { success: false, error: "Uploaded file not found in storage" };
+    }
+    const buffer = Buffer.from(await obj.Body.transformToByteArray());
+    const audioMime = obj.ContentType || resolveAudioMime(originalName, "");
 
     // 2. Extract metadata up front — needed both for the DB row and for the
     //    duplicate check below. Cover art is parsed here but only uploaded to
@@ -93,7 +142,7 @@ export async function uploadTrackAction(formData: FormData) {
     let picture: { format: string; data: Uint8Array } | null = null;
 
     try {
-      const metadata = await mm.parseBuffer(buffer, file.type);
+      const metadata = await mm.parseBuffer(buffer, audioMime);
       const c = metadata.common;
       const f = metadata.format;
 
@@ -125,7 +174,8 @@ export async function uploadTrackAction(formData: FormData) {
 
     // 3. Duplicate detection — a track is considered a duplicate when its
     //    title + artist + album match an existing row (case/whitespace
-    //    insensitive). Runs before any R2 upload so duplicates leave no files.
+    //    insensitive). The audio is already in R2 (direct upload), so on a
+    //    duplicate we delete that object to avoid leaving an orphan file.
     if (!allowDuplicate) {
       const existing = (await queryD1(
         `SELECT title, artist, album FROM tracks`
@@ -143,6 +193,11 @@ export async function uploadTrackAction(formData: FormData) {
       );
 
       if (isDuplicate) {
+        try {
+          await r2Client.send(new DeleteObjectCommand({ Bucket: bucketName, Key: key }));
+        } catch (delErr) {
+          console.warn("Failed to delete duplicate upload from R2:", delErr);
+        }
         return {
           success: false,
           duplicate: true,
@@ -151,23 +206,11 @@ export async function uploadTrackAction(formData: FormData) {
       }
     }
 
-    // 4. Upload audio file to R2
-    const fileExtension = file.name.split('.').pop();
-    const uniqueFilename = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExtension}`;
-
-    await r2Client.send(
-      new PutObjectCommand({
-        Bucket: bucketName,
-        Key: uniqueFilename,
-        Body: buffer,
-        ContentType: resolveAudioMime(file.name, file.type),
-      })
-    );
-
-    // Provide the public URL (Assume public bucket mapping)
-    // Note: R2 requires a custom domain or public bucket URL for direct access
+    // 4. The audio object already lives at `key` (uploaded straight to R2 by the
+    //    browser). Build its URL exactly as before; normalizeTrack rewrites it to
+    //    the /api/audio proxy on the way out.
     const publicR2Url = process.env.R2_PUBLIC_URL || `https://pub-xxxxxxxx.r2.dev`;
-    const fileUrl = `${publicR2Url}/${uniqueFilename}`;
+    const fileUrl = `${publicR2Url}/${key}`;
 
     // 5. Resolve cover art now that the track is confirmed new. Prefer the
     //    file's embedded artwork; if there is none, auto-look it up online
