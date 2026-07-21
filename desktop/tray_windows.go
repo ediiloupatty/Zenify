@@ -69,6 +69,7 @@ const (
 
 	swRestore  = 9
 	swHide     = 0
+	swShow     = 5 // SW_SHOW — reliably un-hides a SW_HIDE'd window
 	swShowNoAc = 4 // SW_SHOWNOACTIVATE
 
 	swpShowWindow = 0x0040
@@ -354,7 +355,17 @@ func winHideToTray(hwnd uintptr) {
 }
 
 func winShowFromTray(hwnd uintptr) {
+	// SW_RESTORE alone doesn't reliably re-show a window that was hidden with
+	// SW_HIDE — it only un-minimizes — which is why relaunching (or clicking the
+	// tray icon) sometimes "didn't open". SW_SHOW guarantees the un-hide;
+	// SW_RESTORE first still covers the minimized-rather-than-hidden case.
 	pShowWindow.Call(hwnd, swRestore)
+	pShowWindow.Call(hwnd, swShow)
+	// A background process is usually denied SetForegroundWindow (the taskbar
+	// button just flashes), so flip the window to the top of the z-order and back
+	// to pull it visibly to the front — without leaving it permanently topmost.
+	pSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoActivate)
+	pSetWindowPos.Call(hwnd, hwndNoTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoActivate)
 	pSetForegroundWindow.Call(hwnd)
 }
 

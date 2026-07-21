@@ -295,12 +295,21 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 		}
 
 	case wmClose:
-		saveWindowState(hwnd)
-		// Closing a music player shouldn't kill playback. Hide to the tray instead;
-		// only "Keluar" in the tray menu (which sets quitting) really exits.
-		if trayActive && !quitting {
-			winHideToTray(hwnd)
-			return 0
+		// X / Alt+F4 fully quit (stop music + exit), per the user's preference.
+		// requestQuit sets `quitting` and calls w.Terminate(), which comes back
+		// through here — let that second pass fall through to the default proc so
+		// the window actually destroys.
+		if !quitting {
+			saveWindowState(hwnd)
+			if requestQuit != nil {
+				requestQuit()
+				return 0
+			}
+			// Fallback if the quit hook isn't wired: hide rather than lose playback.
+			if trayActive {
+				winHideToTray(hwnd)
+				return 0
+			}
 		}
 	}
 	r, _, _ := pCallWindowProc.Call(origWndProc, hwnd, msg, wparam, lparam)
