@@ -24,6 +24,7 @@
     "swr": "^2.4.2"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "^16.2.11",
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",

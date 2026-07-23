@@ -47,7 +47,7 @@ export default async function AlbumPage({
 
   return (
     <div
-      className="flex h-screen font-sans overflow-hidden relative gap-2"
+      className="flex h-screen font-sans overflow-hidden relative"
       style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}
     >
       <DynamicBackground />

@@ -11,6 +11,31 @@
 }
 
 /* ═══════════════════════════════════════════════════════════
+   COVER-TINTED CHROME (sidebar + top header)
+   The current cover's dominant colour, published by <ChromeTint> as
+   --chrome-tint. Registered so the value cross-fades between songs instead
+   of snapping; the ::before layers below bleed it in at a low opacity.
+═══════════════════════════════════════════════════════════ */
+@property --chrome-tint {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+:root {
+  transition: --chrome-tint 1200ms ease-in-out;
+}
+.chrome-tinted { position: relative; }
+.chrome-tinted::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;                 /* above the element's own bg, below its content */
+  pointer-events: none;
+  background: linear-gradient(155deg, var(--chrome-tint) 0%, transparent 60%);
+  opacity: 0.14;
+}
+
+/* ═══════════════════════════════════════════════════════════
    DARK THEME (default)
 ═══════════════════════════════════════════════════════════ */
 :root,

@@ -9,7 +9,7 @@ export default async function TopHeader({ isHome = false }: { isHome?: boolean }
 
   return (
     <header
-      className="glass-chrome flex items-center justify-between px-4 md:px-8 pt-5 md:pt-7 pb-4 md:pb-5 flex-shrink-0 gap-3 backdrop-blur-xl transition-all duration-500 z-50 relative"
+      className="glass-chrome chrome-tinted flex items-center justify-between px-4 md:px-8 pt-5 md:pt-7 pb-4 md:pb-5 flex-shrink-0 gap-3 backdrop-blur-xl transition-all duration-500 z-50 relative"
       style={{
         background: "transparent",
         backdropFilter: "blur(24px)",

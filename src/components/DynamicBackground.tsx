@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { usePlayer } from "@/context/PlayerContext";
+
+// Returns false during SSR and true once running on the client, without a
+// setState-in-effect. Used to gate the player-reading layer below to client-only.
+const noopSubscribe = () => () => {};
+function useIsClient() {
+  return useSyncExternalStore(noopSubscribe, () => true, () => false);
+}
 
 // Downscale the cover to a tiny thumbnail before blurring. A 140px CSS blur on
 // a 32x32 canvas looks identical to blurring the full-resolution image but uses
@@ -27,7 +34,12 @@ function downscaleCover(src: string, size: number): Promise<string> {
   });
 }
 
-export default function DynamicBackground() {
+// The cover-blur layer reads live player state, so it only exists on the client:
+// usePlayer() consumes a client Context that doesn't cross the server-component
+// {children} boundary during SSR (it would throw "must be used within a
+// PlayerProvider" and force a recoverable client re-render). Splitting it out
+// means the parent can SSR the static backdrop while this mounts client-only.
+function CoverBlurLayer() {
   const { tracks, currentTrackIndex } = usePlayer();
   const [bgImage, setBgImage] = useState<string>("");
   const lastUrlRef = useRef<string>("");
@@ -50,31 +62,40 @@ export default function DynamicBackground() {
     }
   }, [tracks, currentTrackIndex]);
 
+  if (!bgImage) return null;
+
+  return (
+    <div
+      className="dynamic-bg-blur absolute inset-0 w-full h-full transition-all duration-[1500ms] ease-in-out"
+      style={{
+        backgroundImage: `url(${bgImage})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        // The source is already a 32px thumbnail upscaled to fill the screen,
+        // so it's extremely soft to begin with — a 60px blur looks identical
+        // to the old 140px but costs the compositor a fraction as much.
+        filter: "blur(60px)",
+        transform: "scale(1.4)",
+        opacity: 0.45,
+        // No `willChange` here: it pinned this element to a permanently-live
+        // GPU layer that kept re-compositing even while idle (a constant drain
+        // while gaming). Without it the blurred layer is painted once and
+        // cached; the 1.5s cross-track fade still runs fine.
+      }}
+    />
+  );
+}
+
+export default function DynamicBackground() {
+  // Gate the player-reading layer to the client so it never runs during SSR.
+  const isClient = useIsClient();
+
   return (
     <div
       className="absolute inset-0 w-full h-full z-0 overflow-hidden"
       style={{ background: "#0d111c" }}
     >
-      {bgImage && (
-        <div
-          className="dynamic-bg-blur absolute inset-0 w-full h-full transition-all duration-[1500ms] ease-in-out"
-          style={{
-            backgroundImage: `url(${bgImage})`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-            // The source is already a 32px thumbnail upscaled to fill the screen,
-            // so it's extremely soft to begin with — a 60px blur looks identical
-            // to the old 140px but costs the compositor a fraction as much.
-            filter: "blur(60px)",
-            transform: "scale(1.4)",
-            opacity: 0.45,
-            // No `willChange` here: it pinned this element to a permanently-live
-            // GPU layer that kept re-compositing even while idle (a constant drain
-            // while gaming). Without it the blurred layer is painted once and
-            // cached; the 1.5s cross-track fade still runs fine.
-          }}
-        />
-      )}
+      {isClient && <CoverBlurLayer />}
 
       {/* Gradient overlay: biarkan warna tembus di atas, makin gelap ke bawah untuk keterbacaan */}
       <div

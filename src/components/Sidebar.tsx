@@ -12,7 +12,7 @@ export default async function Sidebar({ currentCategory }: { currentCategory?: s
 
   return (
     <aside
-      className="glass-chrome hidden md:flex relative z-20 flex-col w-[220px] py-7 flex-shrink-0 h-full backdrop-blur-xl transition-all duration-500"
+      className="glass-chrome chrome-tinted hidden md:flex relative z-20 flex-col w-[220px] py-7 flex-shrink-0 h-full backdrop-blur-xl transition-all duration-500"
       style={{
         background: "rgba(43, 51, 63, 0.4)",
         backdropFilter: "blur(24px)",
