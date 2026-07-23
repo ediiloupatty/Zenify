@@ -58,7 +58,7 @@ function engineReducer(state: EngineState, action: EngineAction): EngineState {
 
 /**
  * Core audio engine hook. Manages:
- * - HTML5 Audio + Web Audio API (AudioContext, analyser, gain)
+ * - HTML5 Audio + Web Audio API (AudioContext, gain)
  * - Crossfade between tracks
  * - Volume, mute, persistence
  * - Sleep timer
@@ -163,10 +163,8 @@ export function useAudioEngine() {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const tailRef = useRef<HTMLAudioElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
 
@@ -340,19 +338,13 @@ export function useAudioEngine() {
       const ctx = new AudioContextClass();
       audioContextRef.current = ctx;
 
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.82;
-      analyserRef.current = analyser;
-
       const gain = ctx.createGain();
       gain.gain.value = volume;
       gainNodeRef.current = gain;
 
       const source = ctx.createMediaElementSource(audioRef.current);
       sourceRef.current = source;
-      source.connect(analyser);
-      analyser.connect(gain);
+      source.connect(gain);
       gain.connect(ctx.destination);
 
       audioRef.current.volume = 1;
@@ -637,6 +629,19 @@ export function useAudioEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTrack?.id, isPlaying, effectiveQuality]);
 
+  // ── Mini-player progress bridge (desktop overlay) ──────────────────────────
+  // The desktop mini overlay reads live progress from this global on its own
+  // ticker, rather than us re-dispatching `nowplaying` on every timeupdate
+  // (which would hammer the Discord-presence write). Mirrors the exact values
+  // that drive the on-screen bar, so it stays correct in browser and native
+  // engine modes alike.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    (window as unknown as {
+      __zenifyProgress?: { position: number; duration: number };
+    }).__zenifyProgress = { position: progress, duration };
+  }, [progress, duration]);
+
   // ── Media Session ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
@@ -916,8 +921,8 @@ export function useAudioEngine() {
     upcoming,
 
     // Refs
-    audioRef, tailRef, canvasRef,
-    analyserRef, audioContextRef, gainNodeRef,
+    audioRef, tailRef,
+    audioContextRef, gainNodeRef,
 
     // State
     isExpanded, setIsExpanded: (v: boolean) => dispatch({ type: "SET_EXPANDED", payload: v }), desktopOffset,

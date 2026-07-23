@@ -111,6 +111,12 @@ var defaultURL = "http://localhost:3000"
 // Set by -minimized, which is how the autostart entry launches us.
 var startHidden bool
 
+// requestQuit performs a full quit (stop audio, save geometry, drop tray, tear
+// down the webview). It's set to a closure in main() once the audio engine and
+// window exist; the WM_CLOSE handler (chrome_windows.go) calls it so the X button
+// / Alt+F4 fully exit instead of hiding to the tray.
+var requestQuit func()
+
 func main() {
 	// Named appURL, not url: a variable called `url` would shadow the net/url
 	// package that playerURL below relies on.
@@ -188,12 +194,12 @@ func main() {
 	w.Bind("winMinimize", func() { winMinimize(hwnd) })
 	w.Bind("winToggleMaximize", func() { winToggleMaximize(hwnd) })
 	w.Bind("winDragStart", func() { winDragStart(hwnd) })
-	// Closing a music player shouldn't kill the music. The window only hides; the
-	// tray menu's "Keluar" is the real exit.
+	// The X button fully quits (stop music + exit), per the user's preference.
+	// Wired to requestQuit, which is set to quitApp once the audio engine exists.
 	w.Bind("winClose", func() {
-		saveWindowState(hwnd)
-		winHideToTray(hwnd)
-		trayNotifyHidden()
+		if requestQuit != nil {
+			requestQuit()
+		}
 	})
 
 	// Swap between the full window and the compact always-on-top mini player,
@@ -215,7 +221,7 @@ func main() {
 		if over {
 			a = miniAlphaHover
 		}
-		setMiniAlpha(hwnd, a)
+		animateMiniAlpha(hwnd, a)
 	})
 
 	// Native audio engine (Direct Mode on desktop): the page drives playback
@@ -233,6 +239,21 @@ func main() {
 	w.Bind("nativePrefetch", func(url string) { eng.Prefetch(url) })
 	w.Bind("nativeClearCache", func() { eng.ClearCache() })
 	w.Bind("nativeCacheStats", func() cacheStats { return eng.CacheStats() })
+
+	// Full quit: stop playback (releases the audio device), persist the window
+	// geometry, drop the tray icon, and tear the webview down. Guarded so the
+	// re-entrant WM_CLOSE that w.Terminate() triggers can't run it twice.
+	quitApp := func() {
+		if quitting {
+			return
+		}
+		quitting = true
+		eng.Stop()
+		saveWindowState(hwnd)
+		trayRemove()
+		w.Terminate()
+	}
+	requestQuit = quitApp
 
 	// Exposed to the page as window.zenifyPresence(detail). webview unmarshals the
 	// JS object argument straight into our struct. We hand off without blocking.
@@ -278,11 +299,7 @@ func main() {
 				case "mini":
 					toggleMini()
 				case "quit":
-					quitting = true
-					eng.Stop() // release the audio device before the window dies
-					saveWindowState(hwnd)
-					trayRemove()
-					w.Terminate()
+					quitApp()
 				}
 			})
 		}
