@@ -29,8 +29,6 @@ type CompactBarProps = {
   sleepLeftMs: number | null;
   showSleepMenu: boolean;
   sleepMenuRef: React.RefObject<HTMLDivElement | null>;
-  // Canvas ref for visualizer
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
   // Handlers
   onExpand: () => void;
   onTogglePlay: (e?: React.MouseEvent) => void;
@@ -55,7 +53,6 @@ export default function CompactBar(props: CompactBarProps) {
     progress, duration, progressPercent,
     repeatMode, shuffle, barSpecs, streamQuality,
     sleepMode, sleepLeftMs, showSleepMenu, sleepMenuRef,
-    canvasRef,
     onExpand, onTogglePlay, onPrev, onNext,
     onToggleRepeat, onToggleShuffle, onToggleQueue,
     onVolumeChange, onToggleMute, onShareTrack,
@@ -150,7 +147,7 @@ export default function CompactBar(props: CompactBarProps) {
           </button>
         </div>
 
-        {/* Visualizer Waveform / Progress */}
+        {/* Progress bar */}
         <div className="flex-1 flex items-center gap-4 min-w-0">
           <span className="text-xs font-mono w-10 text-right" style={{ color: "var(--text-muted)" }}>{fmt(progress)}</span>
 
@@ -162,19 +159,15 @@ export default function CompactBar(props: CompactBarProps) {
                  }
                }}>
 
-            <div className="absolute inset-0 w-full h-full flex items-center overflow-hidden pointer-events-none opacity-80">
-              <canvas ref={canvasRef} className="w-full h-full" width={1000} height={40} />
+            {/* Track + played fill */}
+            <div className="w-full h-1 rounded-full bg-white/15 overflow-hidden transition-[height] group-hover:h-1.5">
+              <div className="h-full rounded-full" style={{ width: `${progressPercent}%`, background: accent }}></div>
             </div>
 
-            <div className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 flex items-center transition-opacity">
-              <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden">
-                <div className="h-full" style={{ width: `${progressPercent}%`, background: accent }}></div>
-              </div>
-            </div>
-
+            {/* Playhead knob — grows on hover */}
             <div
-              className="absolute w-1 h-8 bg-white rounded-full shadow-[0_0_10px_white] pointer-events-none opacity-50 group-hover:opacity-100 transition-opacity"
-              style={{ left: `calc(${progressPercent}% - 2px)` }}
+              className="absolute w-3 h-3 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.6)] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity -translate-x-1/2"
+              style={{ left: `${progressPercent}%` }}
             ></div>
           </div>
 

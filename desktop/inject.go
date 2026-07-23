@@ -193,12 +193,14 @@ window.__zenifyClick = function (action) {
     // as solid even while the whole overlay is see-through.
     var m = document.createElement('div');
     m.id = 'zenify-mini';
-    // Light, low-opacity frosted glass rather than a solid dark box: most of the
-    // panel is translucent so the window's see-through (set by the Go side) reads
-    // as glass. A faint slate tint + blur keeps it a "material" without going
-    // black. Cover/text/buttons below stay high-contrast so they still read.
-    m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:none;align-items:center;gap:13px;padding:13px 15px;box-sizing:border-box;' +
-      'background:transparent;' +
+    // Frosted dark glass: a semi-opaque slate tint + blur so the panel reads as
+    // one tidy card at idle instead of loose text floating over the desktop. The
+    // whole window is still faded by the Go side (LWA_ALPHA), so this "solid"
+    // glass is see-through overall — transparent, but clearly there.
+    m.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;display:none;align-items:center;gap:14px;padding:14px 16px;box-sizing:border-box;' +
+      'background:linear-gradient(135deg,rgba(15,23,42,.80),rgba(2,6,23,.86));' +
+      'backdrop-filter:blur(16px) saturate(1.25);-webkit-backdrop-filter:blur(16px) saturate(1.25);' +
+      'box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 0 0 1px rgba(255,255,255,.05);' +
       'color:#e2e8f0;font-family:system-ui,Segoe UI,sans-serif;user-select:none';
     m.onmousedown = function(){ call('winDragStart'); };
     // Hover → fully opaque (crisp to read & click); leave → back to see-through.
@@ -210,18 +212,20 @@ window.__zenifyClick = function (action) {
     cover.style.cssText = 'width:78px;height:78px;border-radius:12px;flex-shrink:0;background:linear-gradient(135deg,#134e4a,#1e293b);background-size:cover;background-position:center;box-shadow:0 8px 22px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.10)';
 
     var col = document.createElement('div');
-    col.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px';
+    // padding-right keeps the title/artist clear of the absolute window controls
+    // pinned to the top-right corner.
+    col.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;padding-right:58px';
 
     var title = document.createElement('div');
     title.id = 'zenify-mini-title';
-    // Strong layered shadow so white text stays legible over a bright game
-    // showing through the transparent panel.
-    title.style.cssText = 'font-size:14px;font-weight:800;letter-spacing:-.01em;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 8px rgba(0,0,0,.7)';
+    // A single soft shadow keeps white text legible when a bright game shows
+    // through the idle (faded) panel, without muddying it over the dark card.
+    title.style.cssText = 'font-size:14px;font-weight:800;letter-spacing:-.01em;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px rgba(0,0,0,.85)';
     title.textContent = 'Zenify';
 
     var artist = document.createElement('div');
     artist.id = 'zenify-mini-artist';
-    artist.style.cssText = 'font-size:12px;font-weight:600;color:#dbe3ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 6px rgba(0,0,0,.6)';
+    artist.style.cssText = 'font-size:12px;font-weight:600;color:#dbe3ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px rgba(0,0,0,.8)';
 
     var ctrls = document.createElement('div');
     ctrls.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:7px';
@@ -272,12 +276,45 @@ window.__zenifyClick = function (action) {
     winctrls.appendChild(cbtn(minimizeSvg, 'Minimize', function(){ call('winMinimize'); }));
     winctrls.appendChild(cbtn(expandSvg, 'Kembali ke jendela penuh', function(){ call('winToggleMini'); }));
 
+    // Thin progress bar pinned edge-to-edge along the bottom, like a real
+    // mini-player. Driven by a low-frequency ticker (below) reading the live
+    // position the web app publishes on window.__zenifyProgress.
+    var track = document.createElement('div');
+    track.style.cssText = 'position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.10)';
+    var fill = document.createElement('div');
+    fill.id = 'zenify-mini-progress';
+    fill.style.cssText = 'height:100%;width:0;background:linear-gradient(90deg,#14b8a6,#2dd4bf);box-shadow:0 0 6px rgba(20,184,166,.5);transition:width .25s linear';
+    track.appendChild(fill);
+
     m.appendChild(cover);
     m.appendChild(col);
     m.appendChild(winctrls);
+    m.appendChild(track);
     document.body.appendChild(m);
 
     window.__zenifyRenderMini();
+  }
+
+  // Progress ticker: only runs while the mini overlay is open. A 250ms interval
+  // (not rAF) is plenty for a progress bar and keeps the desktop app idle-quiet;
+  // the CSS width transition smooths the steps into continuous motion.
+  var miniProgressTimer = 0;
+  function paintMiniProgress(){
+    var fill = document.getElementById('zenify-mini-progress');
+    if (!fill) return;
+    var p = window.__zenifyProgress;
+    var pct = (p && p.duration > 0) ? Math.max(0, Math.min(1, p.position / p.duration)) * 100 : 0;
+    fill.style.width = pct + '%';
+  }
+  function startMiniProgress(){
+    if (miniProgressTimer) return;
+    paintMiniProgress();
+    miniProgressTimer = setInterval(paintMiniProgress, 250);
+  }
+  function stopMiniProgress(){
+    if (!miniProgressTimer) return;
+    clearInterval(miniProgressTimer);
+    miniProgressTimer = 0;
   }
 
   var PLAY_SVG  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
@@ -299,7 +336,8 @@ window.__zenifyClick = function (action) {
 
   window.__zenifyApplyMini = function(mini){
     document.documentElement.classList.toggle('zenify-mini', !!mini);
-    if (mini) { injectMini(); window.__zenifyRenderMini(); }
+    if (mini) { injectMini(); window.__zenifyRenderMini(); startMiniProgress(); }
+    else { stopMiniProgress(); }
   };
 
   if (document.readyState === 'loading') {

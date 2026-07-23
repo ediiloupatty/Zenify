@@ -3,7 +3,6 @@
 import { useAudioEngine } from "@/hooks/useAudioEngine";
 import { useLyrics } from "@/hooks/useLyrics";
 import { useFavorites } from "@/hooks/useFavorites";
-import { useBarVisualizer } from "@/hooks/useBarVisualizer";
 import { useCoverColor } from "@/lib/useCoverColor";
 import { formatAudioSpecs } from "@/lib/formatSpecs";
 import { computeAccentColors } from "@/components/player/playerUtils";
@@ -15,8 +14,8 @@ export default function BottomPlayer() {
   // ── Core audio engine ──────────────────────────────────────────────────────
   const engine = useAudioEngine();
   const {
-    currentTrack, audioRef, tailRef, canvasRef,
-    analyserRef, audioContextRef, gainNodeRef,
+    currentTrack, audioRef, tailRef,
+    audioContextRef, gainNodeRef,
     isExpanded, setIsExpanded, desktopOffset,
     isPlaying, volume, progress, duration, progressPercent,
     crossfadePrevTrack,
@@ -44,9 +43,6 @@ export default function BottomPlayer() {
 
   // ── Lyrics ─────────────────────────────────────────────────────────────────
   const lyrics = useLyrics(currentTrack, audioRef, audioContextRef, isPlaying, isExpanded);
-
-  // ── Compact bar visualizer ─────────────────────────────────────────────────
-  useBarVisualizer(canvasRef, analyserRef, audioRef, coverColor, isExpanded, isPlaying);
 
   // ── Bail if nothing loaded ─────────────────────────────────────────────────
   if (!currentTrack) return null;
@@ -173,7 +169,6 @@ export default function BottomPlayer() {
           sleepLeftMs={sleepLeftMs}
           showSleepMenu={showSleepMenu}
           sleepMenuRef={sleepMenuRef}
-          canvasRef={canvasRef}
           // Handlers
           onExpand={() => setIsExpanded(true)}
           onTogglePlay={togglePlay}

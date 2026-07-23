@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -179,6 +180,13 @@ func setMiniTranslucent(hwnd uintptr, on bool) {
 	}
 }
 
+// miniAlphaCur is the alpha currently applied to the mini window; miniFadeGen is
+// bumped on each new fade so a superseded animation knows to stop.
+var (
+	miniAlphaCur = int32(miniAlphaHover)
+	miniFadeGen  int32
+)
+
 // setMiniAlpha adjusts the mini window's opacity (0–255). No-op unless the
 // window is currently layered (i.e. in mini mode), so a stray hover event while
 // full-size can't accidentally fade the main window.
@@ -186,7 +194,31 @@ func setMiniAlpha(hwnd uintptr, a byte) {
 	if !isMini {
 		return
 	}
+	atomic.StoreInt32(&miniAlphaCur, int32(a))
 	pSetLayeredWinAttr.Call(hwnd, 0, uintptr(a), lwaAlpha)
+}
+
+// animateMiniAlpha glides the mini window from its current alpha to target over
+// ~120ms so the idle↔hover transition feels smooth instead of snapping. Each
+// call bumps the generation counter; an older fade goroutine sees the change and
+// bails, so rapid enter/leave never fights itself.
+func animateMiniAlpha(hwnd uintptr, target byte) {
+	gen := atomic.AddInt32(&miniFadeGen, 1)
+	start := byte(atomic.LoadInt32(&miniAlphaCur))
+	if start == target || !isMini {
+		return
+	}
+	go func() {
+		const steps = 8
+		for i := 1; i <= steps; i++ {
+			if atomic.LoadInt32(&miniFadeGen) != gen || !isMini {
+				return // superseded by a newer hover, or left mini mode
+			}
+			a := int(start) + (int(target)-int(start))*i/steps
+			setMiniAlpha(hwnd, byte(a))
+			time.Sleep(15 * time.Millisecond)
+		}
+	}()
 }
 
 // parkDuringInit moves the webview window off-screen the moment it is created,

@@ -221,7 +221,7 @@ func main() {
 		if over {
 			a = miniAlphaHover
 		}
-		setMiniAlpha(hwnd, a)
+		animateMiniAlpha(hwnd, a)
 	})
 
 	// Native audio engine (Direct Mode on desktop): the page drives playback
