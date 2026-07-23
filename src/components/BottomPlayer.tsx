@@ -122,6 +122,7 @@ export default function BottomPlayer() {
         <QueuePanel
           open={showQueue}
           onClose={() => setShowQueue(false)}
+          expanded={isExpanded}
           accent={accent}
           accentSoft={accentSoft}
           coverColor={cc}
