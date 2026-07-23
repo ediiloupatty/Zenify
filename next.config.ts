@@ -1,4 +1,10 @@
 import type { NextConfig } from "next";
+import bundleAnalyzer from "@next/bundle-analyzer";
+
+// Wraps the config only when ANALYZE=true, so normal dev/build is unaffected.
+// Run `ANALYZE=true npm run build` to open the interactive bundle treemap and
+// see which chunks are heaviest (e.g. after the dynamic-import split above).
+const withBundleAnalyzer = bundleAnalyzer({ enabled: process.env.ANALYZE === "true" });
 
 const nextConfig: NextConfig = {
   experimental: {
@@ -44,4 +50,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withBundleAnalyzer(nextConfig);

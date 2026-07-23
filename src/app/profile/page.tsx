@@ -78,7 +78,7 @@ export default async function ProfilePage() {
 
   return (
     <div
-      className="flex h-screen font-sans overflow-hidden relative gap-2"
+      className="flex h-screen font-sans overflow-hidden relative"
       style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}
     >
       <Sidebar currentCategory={null} />

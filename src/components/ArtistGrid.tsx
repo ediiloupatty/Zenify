@@ -1,5 +1,4 @@
-"use client";
-
+// No "use client": only next/link + pure helpers, so it renders on the server.
 import Link from "next/link";
 import { hashString, PALETTES } from "@/lib/utils";
 import CoverImage from "@/components/CoverImage";

@@ -1,5 +1,4 @@
-"use client";
-
+// No "use client": pure presentational, safe as a shared (server/client) component.
 import CoverImage from "@/components/CoverImage";
 import { hashString, COVER_PALETTES, MUSIC_ICON_PATHS } from "./playerUtils";
 

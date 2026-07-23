@@ -1,14 +1,26 @@
 "use client";
 
+import { useState } from "react";
 import { useAudioEngine } from "@/hooks/useAudioEngine";
 import { useLyrics } from "@/hooks/useLyrics";
 import { useFavorites } from "@/hooks/useFavorites";
 import { useCoverColor } from "@/lib/useCoverColor";
 import { formatAudioSpecs } from "@/lib/formatSpecs";
 import { computeAccentColors } from "@/components/player/playerUtils";
-import QueuePanel from "@/components/QueuePanel";
-import ExpandedPlayer from "@/components/player/ExpandedPlayer";
+import dynamic from "next/dynamic";
 import CompactBar from "@/components/player/CompactBar";
+
+// The compact bar is the default, always-visible view, so it loads eagerly.
+// The expanded player and the queue panel are opened on demand and carry a lot
+// of their own markup — split them into their own chunks so the initial /player
+// payload doesn't pay for UI most sessions never open. Both live inside this
+// already client-only (ssr:false) tree, so their chunks are client-only too.
+const ExpandedPlayer = dynamic(() => import("@/components/player/ExpandedPlayer"), {
+  loading: () => null,
+});
+const QueuePanel = dynamic(() => import("@/components/QueuePanel"), {
+  loading: () => null,
+});
 
 export default function BottomPlayer() {
   // ── Core audio engine ──────────────────────────────────────────────────────
@@ -44,6 +56,10 @@ export default function BottomPlayer() {
   // ── Lyrics ─────────────────────────────────────────────────────────────────
   const lyrics = useLyrics(currentTrack, audioRef, audioContextRef, isPlaying, isExpanded);
 
+  // Latch the queue panel's first open so its dynamic chunk isn't fetched on
+  // load; once mounted it stays mounted so the slide-out still animates on close.
+  const [queueMounted, setQueueMounted] = useState(false);
+
   // ── Bail if nothing loaded ─────────────────────────────────────────────────
   if (!currentTrack) return null;
 
@@ -55,6 +71,12 @@ export default function BottomPlayer() {
   // ── Seek handler (shared by both views) ────────────────────────────────────
   const handleSeek = (time: number) => {
     if (audioRef.current) audioRef.current.currentTime = time;
+  };
+
+  // Opening the queue mounts its chunk on demand (see queueMounted latch above).
+  const toggleQueue = () => {
+    setQueueMounted(true);
+    setShowQueue((v) => !v);
   };
 
   return (
@@ -96,13 +118,15 @@ export default function BottomPlayer() {
         </>
       )}
 
-      <QueuePanel
-        open={showQueue}
-        onClose={() => setShowQueue(false)}
-        accent={accent}
-        accentSoft={accentSoft}
-        coverColor={cc}
-      />
+      {queueMounted && (
+        <QueuePanel
+          open={showQueue}
+          onClose={() => setShowQueue(false)}
+          accent={accent}
+          accentSoft={accentSoft}
+          coverColor={cc}
+        />
+      )}
 
       {isExpanded ? (
         <ExpandedPlayer
@@ -133,7 +157,7 @@ export default function BottomPlayer() {
           lyricsContainerRef={lyrics.lyricsContainerRef}
           // Handlers
           onClose={() => setIsExpanded(false)}
-          onToggleQueue={() => setShowQueue((v) => !v)}
+          onToggleQueue={toggleQueue}
           onTogglePlay={togglePlay}
           onPrev={handlePrev}
           onNext={() => playNextTrack()}
@@ -176,7 +200,7 @@ export default function BottomPlayer() {
           onNext={() => playNextTrack()}
           onToggleRepeat={toggleRepeat}
           onToggleShuffle={toggleShuffle}
-          onToggleQueue={() => setShowQueue((v) => !v)}
+          onToggleQueue={toggleQueue}
           onVolumeChange={handleVolumeChange}
           onToggleMute={toggleMute}
           onShareTrack={shareTrack}
