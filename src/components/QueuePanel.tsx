@@ -106,18 +106,24 @@ function HiResDetail({ track, accent, coverColor }: {
 
 // Slide-in "Up Next" drawer. Reads the upcoming queue from the player and lets
 // the user jump straight to any track (respects shuffle order).
-export default function QueuePanel({ 
-  open, 
-  onClose, 
-  accent = "var(--accent)", 
-  accentSoft = "rgba(45, 212, 191, 0.5)", 
-  coverColor = { r: 45, g: 212, b: 191 } 
-}: { 
-  open: boolean; 
-  onClose: () => void; 
-  accent?: string; 
-  accentSoft?: string; 
-  coverColor?: { r: number; g: number; b: number }; 
+export default function QueuePanel({
+  open,
+  onClose,
+  expanded = false,
+  accent = "var(--accent)",
+  accentSoft = "rgba(45, 212, 191, 0.5)",
+  coverColor = { r: 45, g: 212, b: 191 }
+}: {
+  open: boolean;
+  onClose: () => void;
+  // True while the fullscreen ExpandedPlayer is open. There the queue can't sit
+  // in a shifted content column (there is none) — it would slide in transparent
+  // right over the lyrics. So we make it a proper opaque drawer with its own
+  // dimming backdrop instead of colliding with the lyrics behind it.
+  expanded?: boolean;
+  accent?: string;
+  accentSoft?: string;
+  coverColor?: { r: number; g: number; b: number };
 }) {
   const { tracks, currentTrackIndex, upcoming, setCurrentTrackIndex, reorderUpcoming } = usePlayer();
   const current = tracks[currentTrackIndex];
@@ -132,24 +138,40 @@ export default function QueuePanel({
 
   return (
     <>
-      {/* Click-away backdrop (mobile only, desktop shifts main layout) */}
+      {/* Click-away backdrop. Normal view: mobile-only (desktop shifts the main
+          layout to make room). Fullscreen (expanded): always shown, covering the
+          whole player so the drawer reads as a modal over it, not a collision. */}
       {open && (
-        <div 
-          className="fixed inset-x-0 bottom-0 top-[77px] md:top-[89px] z-[105] bg-black/30 queue-backdrop-in md:hidden" 
-          style={{ marginTop: `${desktopOffset}px` }}
-          onClick={onClose} 
+        <div
+          className={
+            expanded
+              ? "fixed inset-0 z-[105] bg-black/50 queue-backdrop-in"
+              : "fixed inset-x-0 bottom-0 top-[77px] md:top-[89px] z-[105] bg-black/30 queue-backdrop-in md:hidden"
+          }
+          style={expanded ? undefined : { marginTop: `${desktopOffset}px` }}
+          onClick={onClose}
         />
       )}
 
       <aside
         role="dialog"
         aria-label="Play queue"
-        className={`fixed right-0 top-[77px] md:top-[89px] bottom-24 w-[300px] max-w-[88vw] z-[110] flex flex-col shadow-2xl transition-transform duration-500 ease-in-out ${
-          open ? "translate-x-0" : "translate-x-full"
-        }`}
+        className={`fixed right-0 w-[300px] max-w-[88vw] z-[110] flex flex-col shadow-2xl transition-transform duration-500 ease-in-out ${
+          expanded ? "" : "top-[77px] md:top-[89px] bottom-24"
+        } ${open ? "translate-x-0" : "translate-x-full"}`}
         style={{
-          marginTop: `${desktopOffset}px`,
-          background: "transparent",
+          // Fullscreen: a full-height, opaque frosted drawer so the lyrics behind
+          // never show through. Normal: transparent — it lives in a content column
+          // over the page's own dynamic background.
+          ...(expanded
+            ? {
+                top: desktopOffset,
+                bottom: 0,
+                background: "rgba(13, 17, 28, 0.94)",
+                backdropFilter: "blur(24px)",
+                WebkitBackdropFilter: "blur(24px)",
+              }
+            : { marginTop: `${desktopOffset}px`, background: "transparent" }),
           borderLeft: "1px solid var(--border-subtle)",
         }}
       >

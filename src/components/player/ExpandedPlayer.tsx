@@ -322,16 +322,6 @@ export default function ExpandedPlayer(props: ExpandedPlayerProps) {
               <span className="text-[10px] font-mono tabular-nums w-7 text-right text-slate-400">
                 {Math.round(volume * 100)}
               </span>
-              <button
-                onClick={(e) => { e.stopPropagation(); onToggleQueue(); }}
-                aria-label="Queue" aria-pressed={showQueue} title="Queue"
-                className="flex-shrink-0 transition-colors"
-                style={{ color: showQueue ? accent : "#94a3b8" }}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z" />
-                </svg>
-              </button>
             </div>
           </div>
         </div>
