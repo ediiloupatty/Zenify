@@ -11,7 +11,7 @@
 ; Hasil: Output\ZenifySetup.exe  — itu yang dibagikan ke orang lain.
 
 #define MyAppName "Zenify"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "Edii Loupatty"
 #define MyAppExeName "zenify-desktop.exe"
 
