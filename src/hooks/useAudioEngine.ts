@@ -46,8 +46,13 @@ function engineReducer(state: EngineState, action: EngineAction): EngineState {
     case "SET_EXPANDED": return { ...state, isExpanded: action.payload };
     case "SET_DESKTOP_OFFSET": return { ...state, desktopOffset: action.payload };
     case "SET_VOLUME": return { ...state, volume: action.payload };
-    case "SET_PROGRESS": return { ...state, progress: action.payload };
-    case "SET_DURATION": return { ...state, duration: action.payload };
+    // Progress/duration are dispatched from `timeupdate`, the hottest event in
+    // the app. Returning a fresh object for an unchanged value would re-render
+    // the whole player tree for nothing, so bail out when it didn't move.
+    case "SET_PROGRESS":
+      return state.progress === action.payload ? state : { ...state, progress: action.payload };
+    case "SET_DURATION":
+      return state.duration === action.payload ? state : { ...state, duration: action.payload };
     case "SET_SLEEP_MODE": return { ...state, sleepMode: action.payload.mode, sleepLeftMs: action.payload.leftMs, showSleepMenu: false };
     case "SET_SLEEP_LEFT": return { ...state, sleepLeftMs: action.payload };
     case "SET_SHOW_SLEEP_MENU": return { ...state, showSleepMenu: action.payload };
@@ -398,12 +403,21 @@ export function useAudioEngine() {
     }
   };
 
+  // `timeupdate` fires ~4x/second for the entire lifetime of a listening
+  // session, and every dispatch re-renders the player tree. Nothing on screen
+  // resolves finer than a second — the readout is mm:ss and a second of a
+  // 4-minute track moves the bar by 0.4% — so we publish whole seconds only.
+  // That's a 4x cut in player renders for a pixel-identical UI, and it's what
+  // keeps the app flat-idle after hours of playback.
+  const publishTime = (audio: HTMLAudioElement) => {
+    dispatch({ type: "SET_PROGRESS", payload: Math.floor(audio.currentTime) });
+    const d = audio.duration;
+    dispatch({ type: "SET_DURATION", payload: Number.isFinite(d) ? Math.floor(d) : 0 });
+  };
+
   useEffect(() => {
     const stop = onRenderingActiveChange(() => {
-      if (isRenderingActive() && audioRef.current) {
-        dispatch({ type: "SET_PROGRESS", payload: audioRef.current.currentTime });
-        dispatch({ type: "SET_DURATION", payload: audioRef.current.duration || 0 });
-      }
+      if (isRenderingActive() && audioRef.current) publishTime(audioRef.current);
     });
     return stop;
   }, []);
@@ -415,8 +429,7 @@ export function useAudioEngine() {
   const handleTimeUpdate = () => {
     if (audioRef.current) {
       if (isRenderingActive()) {
-        dispatch({ type: "SET_PROGRESS", payload: audioRef.current.currentTime });
-        dispatch({ type: "SET_DURATION", payload: audioRef.current.duration || 0 });
+        publishTime(audioRef.current);
       }
 
       const d = audioRef.current.duration;

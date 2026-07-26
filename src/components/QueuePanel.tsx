@@ -125,7 +125,7 @@ export default function QueuePanel({
   accentSoft?: string;
   coverColor?: { r: number; g: number; b: number };
 }) {
-  const { tracks, currentTrackIndex, upcoming, setCurrentTrackIndex, reorderUpcoming } = usePlayer();
+  const { tracks, currentTrackIndex, upcoming, setCurrentTrackIndex, reorderUpcoming, isPlaying } = usePlayer();
   const current = tracks[currentTrackIndex];
 
   const [desktopOffset, setDesktopOffset] = useState(0);
@@ -153,10 +153,18 @@ export default function QueuePanel({
         />
       )}
 
+      {/* Once opened the drawer stays mounted for the rest of the session (so it
+          can animate out), which means everything inside it — the whole upcoming
+          list, the equalizer, the blur — would otherwise keep costing paint and
+          compositing forever while parked off-screen. `visibility: hidden`,
+          applied only after the slide-out finishes, takes the entire subtree out
+          of rendering; `inert` takes it out of tab order and the a11y tree. */}
       <aside
         role="dialog"
         aria-label="Play queue"
-        className={`fixed right-0 w-[300px] max-w-[88vw] z-[110] flex flex-col shadow-2xl transition-transform duration-500 ease-in-out ${
+        aria-hidden={!open}
+        inert={!open ? true : undefined}
+        className={`fixed right-0 w-[300px] max-w-[88vw] z-[110] flex flex-col shadow-2xl ${
           expanded ? "" : "top-[77px] md:top-[89px] bottom-24"
         } ${open ? "translate-x-0" : "translate-x-full"}`}
         style={{
@@ -168,11 +176,19 @@ export default function QueuePanel({
                 top: desktopOffset,
                 bottom: 0,
                 background: "rgba(13, 17, 28, 0.94)",
-                backdropFilter: "blur(24px)",
-                WebkitBackdropFilter: "blur(24px)",
+                // Blurring what's behind a drawer nobody can see is pure waste —
+                // the compositor re-samples that region on every frame the page
+                // moves underneath it.
+                backdropFilter: open ? "blur(24px)" : "none",
+                WebkitBackdropFilter: open ? "blur(24px)" : "none",
               }
             : { marginTop: `${desktopOffset}px`, background: "transparent" }),
           borderLeft: "1px solid var(--border-subtle)",
+          visibility: open ? "visible" : "hidden",
+          // Hiding waits out the 500ms slide; showing is immediate.
+          transition: open
+            ? "transform 500ms ease-in-out, visibility 0s"
+            : "transform 500ms ease-in-out, visibility 0s linear 500ms",
         }}
       >
         {/* ─── Sticky Header ─── */}
@@ -225,8 +241,9 @@ export default function QueuePanel({
                     style={{ color: "var(--text-secondary)" }}
                   />
                 </div>
-                {/* Equalizer animation */}
-                <div className="flex items-end gap-[2px] h-4 flex-shrink-0 pr-1">
+                {/* Equalizer animation — infinite, so it only runs when it is
+                    actually saying something: drawer open AND audio playing. */}
+                <div className={`flex items-end gap-[2px] h-4 flex-shrink-0 pr-1 ${open && isPlaying ? "" : "eq-paused"}`}>
                   <span className="eq-bar" style={{ background: "var(--text-secondary)", animationDelay: "0s" }} />
                   <span className="eq-bar" style={{ background: "var(--text-secondary)", animationDelay: "0.2s" }} />
                   <span className="eq-bar" style={{ background: "var(--text-secondary)", animationDelay: "0.4s" }} />

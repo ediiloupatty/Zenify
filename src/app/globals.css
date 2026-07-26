@@ -199,6 +199,24 @@
 [data-render-idle] *::before,
 [data-render-idle] *::after {
   animation-play-state: paused !important;
+  /* `will-change` permanently promotes an element to its own GPU layer and
+     holds that texture for as long as the rule applies. Worth it while things
+     move; pure VRAM rent once they've stopped — and above they have. */
+  will-change: auto !important;
+}
+/* Same reasoning as lite mode, applied temporarily: `backdrop-filter` makes the
+   compositor re-sample and re-blur a large region whenever anything behind the
+   chrome moves. A window the user isn't looking at should not be paying that.
+   The chrome goes opaque at the same moment (--nav-bg is 95% opaque, so the
+   swap is barely perceptible) and both revert the instant focus returns. */
+[data-render-idle] *,
+[data-render-idle] *::before,
+[data-render-idle] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+[data-render-idle] .glass-chrome {
+  background: var(--nav-bg) !important;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -311,8 +329,10 @@
     to   { opacity: 1; transform: translateX(0); }
   }
   .queue-slide-in {
+    /* No `will-change`: this animation runs once for 0.32s, but the class stays
+       on the element, so the hint pinned a live GPU layer for the whole session
+       in exchange for a third of a second of smoothing. */
     animation: queue-slide-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
-    will-change: transform, opacity;
   }
 
   /* Backdrop behind the queue drawer */

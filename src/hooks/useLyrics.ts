@@ -75,6 +75,12 @@ export function useLyrics(
   useEffect(() => {
     setExternalLyrics(null);
     setIsFetchingLyrics(false);
+    // The sweep loop is only alive while the player is expanded, so a track that
+    // changes in the background would otherwise leave the previous song's line
+    // highlighted for the first frame after re-opening.
+    activeLyricIndexRef.current = -1;
+    activeLineElRef.current = null;
+    setActiveLyricIndex(-1);
 
     if (!currentTrack) return;
 
@@ -121,7 +127,19 @@ export function useLyrics(
   const isPlayingRef = useRef(isPlaying);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
+  // The loop below is the most expensive thing in the app while it runs: every
+  // frame it re-scans the lyric list and rewrites a handful of inline styles per
+  // word (each write is a style recalc + paint). None of that is observable
+  // unless the fullscreen player is open — the compact bar renders no lyrics at
+  // all — and "collapsed, playing for hours" is the state the app actually sits
+  // in. So the loop only exists while `isExpanded`; otherwise it isn't scheduled
+  // and the sweep costs exactly nothing. (On desktop the lyrics column is
+  // visible in both tabs of the expanded player, so `isExpanded` is the gate,
+  // not `activeTab`.) Re-entering recomputes from audio.currentTime on the very
+  // first frame, so nothing has to be caught up.
   useEffect(() => {
+    if (!isExpanded) return;
+
     let rafId: number;
     let backoffId: ReturnType<typeof setTimeout> | null = null;
     let active = true;
@@ -254,7 +272,7 @@ export function useLyrics(
       if (backoffId !== null) clearTimeout(backoffId);
       stopGate();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isExpanded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll lyric container to active line
   useEffect(() => {

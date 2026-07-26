@@ -10,10 +10,20 @@ function useIsClient() {
   return useSyncExternalStore(noopSubscribe, () => true, () => false);
 }
 
+// Thumbnails already produced this session. A 32x32 JPEG data URL is ~1 KB, so
+// the cap exists only to keep an all-day shuffle from growing without bound;
+// the point is that replaying a track skips the fetch, decode, canvas draw and
+// base64 encode entirely. FIFO eviction — see useCoverColor for the same shape.
+const THUMB_CACHE_MAX = 120;
+const thumbCache = new Map<string, string>();
+
 // Downscale the cover to a tiny thumbnail before blurring. A 140px CSS blur on
 // a 32x32 canvas looks identical to blurring the full-resolution image but uses
 // a fraction of the GPU memory and compositing cost — especially on mobile.
 function downscaleCover(src: string, size: number): Promise<string> {
+  const hit = thumbCache.get(src);
+  if (hit) return Promise.resolve(hit);
+
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -24,7 +34,14 @@ function downscaleCover(src: string, size: number): Promise<string> {
       const ctx = c.getContext("2d");
       if (ctx) {
         ctx.drawImage(img, 0, 0, size, size);
-        resolve(c.toDataURL("image/jpeg", 0.5));
+        const url = c.toDataURL("image/jpeg", 0.5);
+        thumbCache.set(src, url);
+        while (thumbCache.size > THUMB_CACHE_MAX) {
+          const oldest = thumbCache.keys().next().value;
+          if (oldest === undefined) break;
+          thumbCache.delete(oldest);
+        }
+        resolve(url);
       } else {
         resolve(src); // fallback: use original
       }

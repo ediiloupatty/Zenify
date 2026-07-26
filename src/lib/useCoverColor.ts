@@ -6,21 +6,45 @@ export type RGB = { r: number; g: number; b: number };
 
 // Global in-memory cache to prevent re-fetching and re-calculating canvas pixels
 // for cover URLs that have already been processed in the session.
+//
+// Bounded, because a session that never reloads never drops entries: shuffling a
+// large library for an evening walks through every cover in it. Map preserves
+// insertion order, so evicting from the front is a plain FIFO — and re-reading a
+// hit moves it to the back, which makes it an LRU in practice.
+const COLOR_CACHE_MAX = 300;
 const colorCache = new Map<string, RGB | null>();
+
+function cacheGet(url: string): RGB | null | undefined {
+  if (!colorCache.has(url)) return undefined;
+  const v = colorCache.get(url);
+  colorCache.delete(url);
+  colorCache.set(url, v ?? null);
+  return v ?? null;
+}
+
+function cacheSet(url: string, value: RGB | null) {
+  colorCache.set(url, value);
+  while (colorCache.size > COLOR_CACHE_MAX) {
+    const oldest = colorCache.keys().next().value;
+    if (oldest === undefined) break;
+    colorCache.delete(oldest);
+  }
+}
 
 // Extracts a vibrant dominant colour from a cover image so the UI can tint
 // itself to match the artwork (covers are served cross-origin via R2, which
 // sends the CORS headers canvas pixel reading needs).
 export function useCoverColor(coverUrl?: string): RGB | null {
-  const [color, setColor] = useState<RGB | null>(() => (coverUrl ? (colorCache.get(coverUrl) ?? null) : null));
+  const [color, setColor] = useState<RGB | null>(() => (coverUrl ? (cacheGet(coverUrl) ?? null) : null));
 
   useEffect(() => {
     if (!coverUrl) {
       setColor(null);
       return;
     }
-    if (colorCache.has(coverUrl)) {
-      setColor(colorCache.get(coverUrl) ?? null);
+    const cached = cacheGet(coverUrl);
+    if (cached !== undefined) {
+      setColor(cached);
       return;
     }
     let cancelled = false;
@@ -66,17 +90,17 @@ export function useCoverColor(coverUrl?: string): RGB | null {
         // Fall back to the average colour if nothing vibrant was found.
         const chosen = best.score > 0.12 ? best : { r: sr / n, g: sg / n, b: sb / n };
         const finalColor = { r: Math.round(chosen.r), g: Math.round(chosen.g), b: Math.round(chosen.b) };
-        colorCache.set(coverUrl, finalColor);
+        cacheSet(coverUrl, finalColor);
         if (!cancelled) {
           setColor(finalColor);
         }
       } catch {
         /* tainted canvas / decode error — keep the previous/null colour */
-        colorCache.set(coverUrl, null);
+        cacheSet(coverUrl, null);
       }
     };
     img.onerror = () => {
-      colorCache.set(coverUrl, null);
+      cacheSet(coverUrl, null);
       if (!cancelled) setColor(null);
     };
 

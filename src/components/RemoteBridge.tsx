@@ -11,7 +11,18 @@ type RemoteCommand = {
   track?: Track;
 };
 
+// Poll cadence while the remote is worth watching closely: audio is running, or
+// the phone touched us recently.
 const SYNC_MS = 2000;
+// Cadence once nothing is playing and no phone has said anything for a while.
+// Left at 2s this loop alone is ~1,800 requests/hour for a tab that is doing
+// nothing — the single biggest background cost of leaving the app open all day.
+// The first command off a cold remote lands up to 6s later; any command (or a
+// local play/pause) drops it straight back to SYNC_MS, so an actual remote
+// session is never slow.
+const IDLE_SYNC_MS = 6000;
+// How long a received command keeps us on the fast cadence.
+const ENGAGED_MS = 60_000;
 // When /api/remote/sync says 401 (not logged in), don't hammer the server.
 const BACKOFF_MS = 30_000;
 // State is included in the sync body only when it changed, or every HEARTBEAT_MS
@@ -36,6 +47,7 @@ export default function RemoteBridge() {
   const backoffUntilRef = useRef(0);
   const lastSentKeyRef = useRef("");
   const lastSentAtRef = useRef(0);
+  const lastCommandAtRef = useRef(0);
 
   // Fast-path: when the track or play state changes locally, sync immediately
   // so the phone UI updates without waiting for the next tick.
@@ -82,6 +94,7 @@ export default function RemoteBridge() {
         }
         const data = await res.json();
         const commands: RemoteCommand[] = Array.isArray(data?.commands) ? data.commands : [];
+        if (commands.length > 0) lastCommandAtRef.current = Date.now();
         for (const cmd of commands) runCommand(cmd);
       } catch {
         // Network hiccup — next tick retries.
@@ -123,9 +136,31 @@ export default function RemoteBridge() {
       }
     };
 
-    sync();
-    const id = setInterval(sync, SYNC_MS);
-    return () => clearInterval(id);
+    // Self-scheduling chain rather than a fixed setInterval, so the gap after
+    // each round trip reflects how engaged the remote actually is. A 401 backoff
+    // now really means "sleep" instead of a no-op tick every 2s.
+    const nextDelay = () => {
+      const wait = backoffUntilRef.current - Date.now();
+      if (wait > 0) return wait;
+      if (playerRef.current.isPlaying) return SYNC_MS;
+      if (Date.now() - lastCommandAtRef.current < ENGAGED_MS) return SYNC_MS;
+      return IDLE_SYNC_MS;
+    };
+
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const loop = async () => {
+      await sync();
+      if (stopped) return;
+      timer = setTimeout(loop, nextDelay());
+    };
+
+    loop();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
     // stateKey re-arms the effect so a local change syncs right away.
   }, [stateKey]);
 
