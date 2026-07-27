@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { usePlayer } from "@/context/PlayerContext";
+import { useLiteMode } from "@/lib/perfMode";
 
 // Returns false during SSR and true once running on the client, without a
 // setState-in-effect. Used to gate the player-reading layer below to client-only.
@@ -106,13 +107,19 @@ function CoverBlurLayer() {
 export default function DynamicBackground() {
   // Gate the player-reading layer to the client so it never runs during SSR.
   const isClient = useIsClient();
+  // Lite mode drops the cover backdrop outright rather than just shrinking its
+  // blur. Even at a 20px radius it is a full-viewport, permanently-composited
+  // filtered layer sitting under everything that scrolls — and producing it
+  // costs an image fetch, decode, canvas draw and base64 encode per track. The
+  // flat gradient below already carries the whole layout on its own.
+  const lite = useLiteMode();
 
   return (
     <div
       className="absolute inset-0 w-full h-full z-0 overflow-hidden"
       style={{ background: "#0d111c" }}
     >
-      {isClient && <CoverBlurLayer />}
+      {isClient && !lite && <CoverBlurLayer />}
 
       {/* Gradient overlay: biarkan warna tembus di atas, makin gelap ke bawah untuk keterbacaan */}
       <div

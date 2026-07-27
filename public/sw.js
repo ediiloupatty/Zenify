@@ -22,6 +22,15 @@ const CURRENT_CACHES = [AUDIO_CACHE, COVER_CACHE, SHELL_CACHE, DATA_CACHE];
 // Max cache size in bytes (2 GB default — adjustable)
 const MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
 
+// Hard ceiling on cached songs, as a backstop for responses that arrive without
+// a Content-Length (they measure as 0 and would otherwise never trigger byte
+// eviction, letting the cache grow until the browser evicts the whole origin).
+const MAX_AUDIO_ENTRIES = 400;
+
+// Covers are small but there is one per album, and nothing ever removed them —
+// an all-day browse through a large library adds an entry for every cover seen.
+const MAX_COVER_ENTRIES = 800;
+
 // Patterns to cache
 const AUDIO_PATTERN = /^\/api\/(audio|local-audio)\//;
 const COVER_PATTERN = /^\/api\/cover\//;
@@ -239,7 +248,9 @@ async function handleCoverRequest(request) {
   try {
     const response = await fetch(request);
     if (response.ok) {
-      cache.put(request, response.clone());
+      cache.put(request, response.clone())
+        .then(() => evictByCount(COVER_CACHE, MAX_COVER_ENTRIES))
+        .catch(() => {});
     }
     return response;
   } catch {
@@ -266,14 +277,20 @@ function filterHeaders(headers, remove) {
   return filtered;
 }
 
-// Serve a byte range from a cached full response
+// Serve a byte range from a cached full response.
+//
+// Via Blob, not ArrayBuffer. `arrayBuffer()` pulled the whole song into memory
+// and `.slice()` on it copied the requested part again — a 40 MB FLAC meant an
+// 80 MB allocation for every seek, and the player issues range requests freely.
+// A Blob stays backed by the cache on disk and `Blob.slice()` is a lazy view, so
+// only the bytes actually sent are ever read.
 async function handleRangeFromCache(cachedResponse, rangeHeader) {
-  const body = await cachedResponse.arrayBuffer();
-  const total = body.byteLength;
+  const blob = await cachedResponse.blob();
+  const total = blob.size;
   const match = /bytes=(\d+)-(\d*)/.exec(rangeHeader);
   const start = match ? parseInt(match[1], 10) : 0;
   const end = match && match[2] ? parseInt(match[2], 10) : total - 1;
-  const slice = body.slice(start, end + 1);
+  const slice = blob.slice(start, end + 1);
 
   return new Response(slice, {
     status: 206,
@@ -281,7 +298,7 @@ async function handleRangeFromCache(cachedResponse, rangeHeader) {
       "Content-Type": cachedResponse.headers.get("Content-Type") || "application/octet-stream",
       "Content-Range": `bytes ${start}-${end}/${total}`,
       "Accept-Ranges": "bytes",
-      "Content-Length": String(slice.byteLength),
+      "Content-Length": String(slice.size),
     },
   });
 }
@@ -306,30 +323,63 @@ async function handleRangeFromFetch(response, rangeHeader) {
   });
 }
 
-// Evict oldest entries if cache exceeds MAX_CACHE_BYTES.
-// Uses a simple LRU-style: delete oldest entries first.
-async function evictIfNeeded() {
-  const cache = await caches.open(AUDIO_CACHE);
+// Size of a cached entry, WITHOUT touching its body.
+//
+// This is the whole reason a long session stays responsive. The obvious way to
+// measure a cached response is `(await response.blob()).size` — but that reads
+// the entire body off disk. Doing it for every entry, on every newly cached
+// song, meant that once the cache filled up each new track dragged ~2 GB of
+// FLAC through memory before playback could settle. That is precisely the "it
+// gets sluggish after a few hours" symptom: the cost grew with how much you had
+// already listened to. `cache.match()` resolves without reading the body, so
+// reading Content-Length off the headers is effectively free.
+function cachedSize(response) {
+  const len = response.headers.get("content-length");
+  const n = len ? parseInt(len, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+// List the audio cache with sizes, oldest first (Cache API preserves insertion
+// order). Header reads only — no bodies.
+async function measureAudioCache(cache) {
   const keys = await cache.keys();
-
-  let totalSize = 0;
   const entries = [];
-
+  let totalSize = 0;
   for (const request of keys) {
     const response = await cache.match(request);
     if (!response) continue;
-    const blob = await response.clone().blob();
-    entries.push({ request, size: blob.size });
-    totalSize += blob.size;
+    const size = cachedSize(response);
+    entries.push({ request, size });
+    totalSize += size;
   }
+  return { entries, totalSize };
+}
 
-  // Evict oldest (first inserted) entries until under the limit
-  while (totalSize > MAX_CACHE_BYTES && entries.length > 0) {
-    const oldest = entries.shift();
-    if (oldest) {
-      await cache.delete(oldest.request);
-      totalSize -= oldest.size;
-    }
+// Evict oldest entries if the audio cache exceeds MAX_CACHE_BYTES (or, for
+// responses of unknown size, MAX_AUDIO_ENTRIES). Oldest-first, since the Cache
+// API hands keys back in insertion order.
+async function evictIfNeeded() {
+  const cache = await caches.open(AUDIO_CACHE);
+  const { entries, totalSize } = await measureAudioCache(cache);
+
+  let size = totalSize;
+  let count = entries.length;
+  let i = 0;
+  while ((size > MAX_CACHE_BYTES || count > MAX_AUDIO_ENTRIES) && i < entries.length) {
+    const oldest = entries[i++];
+    await cache.delete(oldest.request);
+    size -= oldest.size;
+    count--;
+  }
+}
+
+// Trim a cache to a maximum number of entries, oldest first. Used for covers,
+// where every entry is small and counting them is enough.
+async function evictByCount(cacheName, maxEntries) {
+  const cache = await caches.open(cacheName);
+  const keys = await cache.keys();
+  for (let i = 0; i < keys.length - maxEntries; i++) {
+    await cache.delete(keys[i]);
   }
 }
 
@@ -339,22 +389,14 @@ self.addEventListener("message", async (event) => {
 
   switch (type) {
     case "GET_CACHE_STATS": {
+      // Header-based, same as eviction — opening Settings used to read every
+      // cached song off disk just to print a total.
       const cache = await caches.open(AUDIO_CACHE);
-      const keys = await cache.keys();
-      let totalSize = 0;
-      const tracks = [];
-
-      for (const request of keys) {
-        const response = await cache.match(request);
-        if (!response) continue;
-        const blob = await response.clone().blob();
-        const url = new URL(request.url);
-        tracks.push({
-          url: url.pathname,
-          size: blob.size,
-        });
-        totalSize += blob.size;
-      }
+      const { entries, totalSize } = await measureAudioCache(cache);
+      const tracks = entries.map(({ request, size }) => ({
+        url: new URL(request.url).pathname,
+        size,
+      }));
 
       event.source.postMessage({
         type: "CACHE_STATS",

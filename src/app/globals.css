@@ -185,6 +185,23 @@
   animation: none !important;
   transform: scaleY(0.6);
 }
+/* The AI search bar's sparkle and typing dots are also infinite loops, and the
+   bar is mounted on every browse page — so on a page left open they never stop. */
+[data-perf="lite"] .ai-sparkle,
+[data-perf="lite"] .ai-dot {
+  animation: none !important;
+}
+/* Cover tinting is off in lite (useCoverColor stops sampling), which leaves this
+   gradient painting a transparent-to-transparent layer over the sidebar and
+   header on every repaint. Nothing to show — take the layer out entirely. */
+[data-perf="lite"] .chrome-tinted::before {
+  display: none;
+}
+/* Registered custom properties animate on the main thread. With no tint being
+   published there is nothing to cross-fade, so the declaration is pure cost. */
+[data-perf="lite"] {
+  transition: none;
+}
 
 /* ═══════════════════════════════════════════════════════════
    BACKGROUND IDLE
@@ -289,6 +306,16 @@
     background: transparent;
     border: 1px solid transparent;
     transition: background 0.15s ease, border-color 0.15s ease;
+    /* Rows are revealed as the user scrolls and are never taken back, so a long
+       session on a large library ends up with thousands of them in the document
+       — and every one used to be laid out and painted on each style change.
+       `content-visibility: auto` makes the browser skip all of that for rows
+       outside the viewport, so the cost of the list stops tracking its length.
+       `auto` in contain-intrinsic-size means the row remembers its real height
+       once measured, so the scrollbar doesn't jump; the 68px is only the first
+       guess for rows that have never been on screen. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 68px;
   }
   .track-row:hover {
     background: var(--bg-card-hover);

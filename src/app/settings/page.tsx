@@ -351,7 +351,7 @@ export default function SettingsPage() {
                     {performanceMode === "auto"
                       ? `Auto — ${liteActive ? "lite (lighter on this device)" : "full glass"}`
                       : performanceMode === "on"
-                        ? "Lite — glass effects off, lightest"
+                        ? "Lite — no glass, no cover tint, no crossfade"
                         : "Off — full glass effects"}
                   </p>
                 </div>

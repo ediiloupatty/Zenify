@@ -6,6 +6,7 @@ import { usePlayer } from "@/context/PlayerContext";
 import { useToast } from "@/context/ToastContext";
 import { cleanTitle } from "@/lib/cleanTitle";
 import { isRenderingActive, onRenderingActiveChange } from "@/lib/renderGate";
+import { useLiteMode } from "@/lib/perfMode";
 import { formatQualityLine } from "@/lib/formatSpecs";
 import { useStreamQuality, withQuality, type StreamQuality } from "@/lib/useStreamQuality";
 import { useDirectMode } from "@/lib/useDirectMode";
@@ -113,6 +114,11 @@ export function useAudioEngine() {
     isExpanded, desktopOffset, volume, progress, duration,
     sleepMode, sleepLeftMs, showSleepMenu, crossfadePrevTrack
   } = state;
+
+  // Lite mode drops crossfade: it decodes a second copy of the outgoing track
+  // in a parallel <audio> element and runs a 30 Hz volume-ramp interval, once
+  // per song boundary, forever. Tracks change with a plain cut instead.
+  const lite = useLiteMode();
 
   // Direct mode: skip the Web Audio graph and lock volume at 1.0 so decoded
   // samples leave the element untouched (as close to bit-perfect as a browser
@@ -438,6 +444,7 @@ export function useAudioEngine() {
       if (
         isPlaying &&
         !directMode &&
+        !lite &&
         !crossfadingRef.current &&
         repeatMode !== "one" &&
         !sleepEndOfTrackRef.current &&
@@ -448,8 +455,12 @@ export function useAudioEngine() {
         startCrossfade();
       }
 
+      // localStorage writes are synchronous and hit disk. This one runs for the
+      // entire life of the session — at 2s that's ~1,800 main-thread writes an
+      // hour to save a number that only matters if the tab goes away. 5s costs
+      // the user at most a few extra seconds of replay on resume.
       const now = Date.now();
-      if (currentTrack && now - lastPosSaveRef.current > 2000) {
+      if (currentTrack && now - lastPosSaveRef.current > 5000) {
         lastPosSaveRef.current = now;
         try {
           localStorage.setItem(

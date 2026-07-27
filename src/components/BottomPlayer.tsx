@@ -5,6 +5,7 @@ import { useAudioEngine } from "@/hooks/useAudioEngine";
 import { useLyrics } from "@/hooks/useLyrics";
 import { useFavorites } from "@/hooks/useFavorites";
 import { useCoverColor } from "@/lib/useCoverColor";
+import { useLiteMode } from "@/lib/perfMode";
 import { formatAudioSpecs } from "@/lib/formatSpecs";
 import { computeAccentColors } from "@/components/player/playerUtils";
 import dynamic from "next/dynamic";
@@ -45,6 +46,10 @@ export default function BottomPlayer() {
     playNextTrack, repeatMode, shuffle,
     toggleRepeat, toggleShuffle, upcoming, tracks,
   } = engine;
+
+  // Lite mode never crossfades (see useAudioEngine), so the tail element below
+  // would be a media element mounted for the whole session that never plays.
+  const lite = useLiteMode();
 
   // ── Cover colour & accent derivation ───────────────────────────────────────
   const coverColor = useCoverColor(currentTrack?.cover_url);
@@ -99,12 +104,14 @@ export default function BottomPlayer() {
             controlsList="nodownload"
           />
           {/* Outgoing-track tail player for crossfade */}
-          <audio
-            ref={tailRef}
-            crossOrigin="anonymous"
-            preload="auto"
-            controlsList="nodownload"
-          />
+          {!lite && (
+            <audio
+              ref={tailRef}
+              crossOrigin="anonymous"
+              preload="auto"
+              controlsList="nodownload"
+            />
+          )}
           {/* Warms up the NEXT track */}
           {nextAudioSrc && (
             <audio

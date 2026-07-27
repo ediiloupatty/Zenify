@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useLiteMode } from "@/lib/perfMode";
 
 export type RGB = { r: number; g: number; b: number };
 
@@ -36,9 +37,15 @@ function cacheSet(url: string, value: RGB | null) {
 // sends the CORS headers canvas pixel reading needs).
 export function useCoverColor(coverUrl?: string): RGB | null {
   const [color, setColor] = useState<RGB | null>(() => (coverUrl ? (cacheGet(coverUrl) ?? null) : null));
+  // Lite mode skips sampling entirely. It isn't a per-frame cost, but every
+  // track change means a second cross-origin fetch of the cover, a decode, a
+  // canvas draw and a getImageData readback — a visible hitch on a weak machine,
+  // repeated for every song of an all-day queue. Callers already handle null
+  // (they fall back to the teal accent), so the UI stays correct, just untinted.
+  const lite = useLiteMode();
 
   useEffect(() => {
-    if (!coverUrl) {
+    if (lite || !coverUrl) {
       setColor(null);
       return;
     }
@@ -105,7 +112,7 @@ export function useCoverColor(coverUrl?: string): RGB | null {
     };
 
     return () => { cancelled = true; };
-  }, [coverUrl]);
+  }, [coverUrl, lite]);
 
   return color;
 }

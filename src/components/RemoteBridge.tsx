@@ -21,8 +21,17 @@ const SYNC_MS = 2000;
 // local play/pause) drops it straight back to SYNC_MS, so an actual remote
 // session is never slow.
 const IDLE_SYNC_MS = 6000;
+// Cadence for a machine that has been sitting there with nothing playing and no
+// phone in sight for half an hour — the state a browser left open overnight is
+// actually in. Most sessions never pair a phone at all, and for them this loop
+// is the only thing still running; 6s forever is ~14,000 requests a day for
+// commands that never come. A cold remote's first command still lands within
+// 15s, and it snaps back to SYNC_MS immediately after.
+const STALE_SYNC_MS = 15_000;
 // How long a received command keeps us on the fast cadence.
 const ENGAGED_MS = 60_000;
+// No commands for this long (and nothing playing) means nobody is out there.
+const STALE_AFTER_MS = 30 * 60_000;
 // When /api/remote/sync says 401 (not logged in), don't hammer the server.
 const BACKOFF_MS = 30_000;
 // State is included in the sync body only when it changed, or every HEARTBEAT_MS
@@ -48,6 +57,11 @@ export default function RemoteBridge() {
   const lastSentKeyRef = useRef("");
   const lastSentAtRef = useRef(0);
   const lastCommandAtRef = useRef(0);
+  // `lastCommandAtRef` starts at 0, which reads as "no command in 56 years" — so
+  // the stale tier also needs to know this tab hasn't just opened. Stamped on
+  // the first effect run rather than at construction, which would be a
+  // side effect during render.
+  const mountedAtRef = useRef(0);
 
   // Fast-path: when the track or play state changes locally, sync immediately
   // so the phone UI updates without waiting for the next tick.
@@ -55,6 +69,8 @@ export default function RemoteBridge() {
   const stateKey = `${currentTrack?.id ?? ""}|${player.isPlaying}`;
 
   useEffect(() => {
+    if (!mountedAtRef.current) mountedAtRef.current = Date.now();
+
     const sync = async () => {
       if (inFlightRef.current || Date.now() < backoffUntilRef.current) return;
       inFlightRef.current = true;
@@ -143,7 +159,11 @@ export default function RemoteBridge() {
       const wait = backoffUntilRef.current - Date.now();
       if (wait > 0) return wait;
       if (playerRef.current.isPlaying) return SYNC_MS;
-      if (Date.now() - lastCommandAtRef.current < ENGAGED_MS) return SYNC_MS;
+      const sinceCommand = Date.now() - lastCommandAtRef.current;
+      if (sinceCommand < ENGAGED_MS) return SYNC_MS;
+      if (sinceCommand > STALE_AFTER_MS && Date.now() - mountedAtRef.current > STALE_AFTER_MS) {
+        return STALE_SYNC_MS;
+      }
       return IDLE_SYNC_MS;
     };
 

@@ -10,6 +10,7 @@ import LargeCoverArt from "./LargeCoverArt";
 import TrackActions from "./TrackActions";
 import QualityBadgePicker from "./QualityBadgePicker";
 import { countSyllables } from "@/hooks/useLyrics";
+import { useLiteMode } from "@/lib/perfMode";
 import type { RGB } from "@/lib/useCoverColor";
 
 type ParsedLyric = { time: number; text: string };
@@ -74,13 +75,23 @@ export default function ExpandedPlayer(props: ExpandedPlayerProps) {
     onSeek, formatTime: fmt,
   } = props;
 
+  // Lite mode reads the same store useLyrics does, so the word-sweep loop and
+  // the markup it drives are switched off together: no per-word spans to style,
+  // and none of the standing blur layers this screen normally holds open for as
+  // long as the user leaves it up.
+  const lite = useLiteMode();
+
   return (
     <div
       className="fixed inset-0 h-screen w-screen z-[100] flex flex-col backdrop-blur-3xl overflow-hidden"
       style={{ background: ambientBg }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {currentTrack.cover_url && (
+      {/* Ambient cover wash. It blurs the cover at FULL resolution across the
+          whole viewport and blends it — the most expensive single layer in the
+          app, held for as long as this screen is open. `ambientBg` above already
+          carries the mood, so lite mode simply goes without it. */}
+      {currentTrack.cover_url && !lite && (
         <div
           className="absolute inset-0 z-0 opacity-40 mix-blend-screen pointer-events-none"
           style={{
@@ -401,15 +412,24 @@ export default function ExpandedPlayer(props: ExpandedPlayerProps) {
                           onClick={() => onSeek(lyric.time)}
                           className="cursor-pointer origin-left lg:origin-left origin-center"
                           style={{
-                            transition: "transform 550ms cubic-bezier(0.22,1,0.36,1), opacity 450ms cubic-bezier(0.22,1,0.36,1), filter 450ms ease, margin 550ms cubic-bezier(0.22,1,0.36,1)",
-                            transform: isActive ? "scale(1)" : `scale(${Math.max(0.78, 0.88 - dist * 0.03)})`,
+                            transition: lite
+                              ? "opacity 450ms cubic-bezier(0.22,1,0.36,1), margin 550ms cubic-bezier(0.22,1,0.36,1)"
+                              : "transform 550ms cubic-bezier(0.22,1,0.36,1), opacity 450ms cubic-bezier(0.22,1,0.36,1), filter 450ms ease, margin 550ms cubic-bezier(0.22,1,0.36,1)",
+                            transform: lite
+                              ? undefined
+                              : isActive ? "scale(1)" : `scale(${Math.max(0.78, 0.88 - dist * 0.03)})`,
                             opacity: isActive ? 1 : isPassed ? Math.max(0.18, 0.45 - dist * 0.08) : Math.max(0.12, 0.35 - dist * 0.07),
-                            filter: isActive ? "blur(0px)" : isFuture ? `blur(${Math.min(dist * 0.6, 2)}px)` : "blur(0px)",
+                            // Every upcoming line carries its own blur — a stack
+                            // of filtered layers, re-composited on each scroll
+                            // step. Distance is already legible from opacity.
+                            filter: lite
+                              ? undefined
+                              : isActive ? "blur(0px)" : isFuture ? `blur(${Math.min(dist * 0.6, 2)}px)` : "blur(0px)",
                             marginBottom: isActive ? "2.5rem" : "1.1rem",
                             marginTop: isActive ? "0.75rem" : "0",
                           }}
                         >
-                          {isActive ? (
+                          {isActive && !lite ? (
                             <span
                               data-active-line-words
                               className="text-lg sm:text-xl lg:text-2xl font-black leading-snug block"
@@ -429,6 +449,13 @@ export default function ExpandedPlayer(props: ExpandedPlayerProps) {
                                   {word}
                                 </span>
                               ))}
+                            </span>
+                          ) : isActive ? (
+                            // No sweep in lite mode, so the line is one plain
+                            // white run of text — no per-word spans to create,
+                            // and nothing for a RAF loop to restyle.
+                            <span className="text-lg sm:text-xl lg:text-2xl font-black leading-snug block text-white">
+                              {lyric.text}
                             </span>
                           ) : (
                             <span className="text-sm sm:text-base lg:text-lg font-bold leading-snug block text-white/90">

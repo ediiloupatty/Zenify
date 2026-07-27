@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { Track } from "@/lib/cloudflare";
 import { cleanTitle } from "@/lib/cleanTitle";
 import { isRenderingActive, onRenderingActiveChange } from "@/lib/renderGate";
+import { useLiteMode } from "@/lib/perfMode";
 
 type ParsedLyric = { time: number; text: string };
 
@@ -49,6 +50,14 @@ export function useLyrics(
   isPlaying: boolean,
   isExpanded: boolean,
 ) {
+  // Word-by-word sweep is the single most expensive thing the app can be doing:
+  // a RAF loop that rewrites several inline styles per word, every frame, for as
+  // long as the fullscreen player is open. Lite mode trades it for line-level
+  // highlighting on a 250ms timer — same lyric, same scroll, ~240x fewer style
+  // recalcs — and tells the view to render the active line as plain text so no
+  // per-word spans are created either.
+  const wordSweep = !useLiteMode();
+
   const [externalLyrics, setExternalLyrics] = useState<string | null>(null);
   const [isFetchingLyrics, setIsFetchingLyrics] = useState(false);
   const [activeTab, setActiveTab] = useState<"player" | "lyrics">("player");
@@ -151,6 +160,13 @@ export function useLyrics(
           backoffId = null;
           if (active) rafId = requestAnimationFrame(tick);
         }, 500);
+      } else if (!wordSweep) {
+        // Nothing here animates between lines, so there is no reason to wake on
+        // every frame — a lyric line lasts seconds, 250ms is imperceptible.
+        backoffId = setTimeout(() => {
+          backoffId = null;
+          if (active) rafId = requestAnimationFrame(tick);
+        }, 250);
       } else {
         rafId = requestAnimationFrame(tick);
       }
@@ -178,7 +194,10 @@ export function useLyrics(
         }
 
         // Sweep + per-word scale, weighted by syllables with held-note absorption
-        if (container && newIdx >= 0) {
+        if (!wordSweep) {
+          // Line-level only: the active line is styled by the view, so there is
+          // nothing left to write per tick.
+        } else if (container && newIdx >= 0) {
           const lineEl = activeLineElRef.current;
           const wordSpans = lineEl?.querySelectorAll<HTMLElement>("[data-wi]");
 
@@ -272,7 +291,7 @@ export function useLyrics(
       if (backoffId !== null) clearTimeout(backoffId);
       stopGate();
     };
-  }, [isExpanded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isExpanded, wordSweep]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll lyric container to active line
   useEffect(() => {
