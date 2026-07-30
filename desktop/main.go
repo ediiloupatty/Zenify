@@ -193,7 +193,9 @@ func main() {
 	// Window controls invoked from the injected titlebar.
 	w.Bind("winMinimize", func() { winMinimize(hwnd) })
 	w.Bind("winToggleMaximize", func() { winToggleMaximize(hwnd) })
-	w.Bind("winDragStart", func() { winDragStart(hwnd) })
+	// x, y are the physical screen coordinates of the mouse-down, so the OS move
+	// loop grabs the window by the exact point the user pressed (see winDragStart).
+	w.Bind("winDragStart", func(x, y float64) { winDragStart(hwnd, int32(x), int32(y)) })
 	// The X button fully quits (stop music + exit), per the user's preference.
 	// Wired to requestQuit, which is set to quitApp once the audio engine exists.
 	w.Bind("winClose", func() {
@@ -216,12 +218,17 @@ func main() {
 
 	// The mini overlay bumps to full opacity while hovered (readable/clickable)
 	// and fades back when the pointer leaves (see-through over a game).
+	// A cursor watchdog backs the pointer-leave event up while the panel is held
+	// opaque: mouseleave can be missed outright on a never-activated topmost
+	// window, which would strand the overlay solid (see watchMiniHover).
 	w.Bind("winMiniHover", func(over bool) {
-		a := byte(miniAlphaIdle)
 		if over {
-			a = miniAlphaHover
+			animateMiniAlpha(hwnd, miniAlphaHover)
+			watchMiniHover(hwnd)
+			return
 		}
-		animateMiniAlpha(hwnd, a)
+		stopMiniHoverWatch()
+		animateMiniAlpha(hwnd, miniAlphaIdle)
 	})
 
 	// Native audio engine (Direct Mode on desktop): the page drives playback

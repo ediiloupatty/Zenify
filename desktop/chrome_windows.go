@@ -40,13 +40,17 @@ const (
 	gwlpWndProc = ^uintptr(3)  // -4   GWL_WNDPROC
 	gwlExStyle  = ^uintptr(19) // -20  GWL_EXSTYLE
 
-	wsExLayered = 0x00080000 // WS_EX_LAYERED — required for per-window alpha
-	lwaAlpha    = 0x00000002 // LWA_ALPHA — the whole window fades uniformly
+	wsExLayered    = 0x00080000 // WS_EX_LAYERED — required for per-window alpha
+	wsExToolWindow = 0x00000080 // WS_EX_TOOLWINDOW — drops it from Alt+Tab & taskbar
+	wsExAppWindow  = 0x00040000 // WS_EX_APPWINDOW — forces it back into Alt+Tab & taskbar
+	lwaAlpha       = 0x00000002 // LWA_ALPHA — the whole window fades uniformly
 
-	// Mini-player opacity: see-through while idle so a game behind stays visible,
-	// fully opaque on hover so it's crisp to read and click. Low idle value =
-	// strongly transparent (the panel reads as glass, not a solid box).
-	miniAlphaIdle  = 150 // ~59%
+	// Mini-player opacity: strongly see-through at rest, fully opaque on hover.
+	// The idle value is intentionally low so the panel reads as floating glass;
+	// the CSS gradient below tints it with the current cover colour (not the
+	// desktop wallpaper) so it stays on-brand rather than picking up whatever is
+	// behind it. Hover snaps to 255 so it's crisp to read and click.
+	miniAlphaIdle  = 105 // ~41% — very translucent cover-tinted glass at rest
 	miniAlphaHover = 255
 
 	swpNoSize      = 0x0001
@@ -165,19 +169,42 @@ func hideOffscreen(hwnd uintptr) {
 	pSetWindowPos.Call(hwnd, 0, offscreen, offscreen, 0, 0, swpNoSize|swpNoZorder|swpNoActivate)
 }
 
-// setMiniTranslucent turns the whole window semi-transparent (mini player) or
-// solid again. WS_EX_LAYERED + LWA_ALPHA fades every pixel uniformly, so a game
-// behind the overlay shows through while it idles. Whether WebView2's composited
-// output honours the alpha depends on the Windows build; if it doesn't, the
-// window simply stays opaque — no breakage, just no see-through.
-func setMiniTranslucent(hwnd uintptr, on bool) {
+// setMiniLayered turns per-window alpha on or off. WS_EX_LAYERED + LWA_ALPHA
+// fades every pixel uniformly, so a game behind the overlay shows through while
+// it idles. Whether WebView2's composited output honours the alpha depends on the
+// Windows build; if it doesn't, the window simply stays opaque — no breakage,
+// just no see-through.
+//
+// Turning it on starts the window FULLY TRANSPARENT rather than at the idle
+// alpha, because every caller wants to fade in from there: the mode switch
+// resizes the window before the page has been told to swap layouts, so the first
+// frames after the switch show the wrong layout at the new size. Starting at 0
+// means those frames are never on screen.
+func setMiniLayered(hwnd uintptr, on bool) {
 	ex, _, _ := pGetWindowLong.Call(hwnd, gwlExStyle)
 	if on {
 		pSetWindowLong.Call(hwnd, gwlExStyle, ex|wsExLayered)
-		setMiniAlpha(hwnd, miniAlphaIdle)
-	} else {
-		pSetWindowLong.Call(hwnd, gwlExStyle, ex&^wsExLayered)
+		applyAlpha(hwnd, 0)
+		return
 	}
+	pSetWindowLong.Call(hwnd, gwlExStyle, ex&^wsExLayered)
+}
+
+// setMiniAltTabHidden flips the window in and out of the Alt+Tab switcher and
+// taskbar via WS_EX_TOOLWINDOW. Windows only re-evaluates switcher membership
+// when the ex-style changes while the window is hidden, so this hides it and
+// leaves it hidden — the caller's following SetWindowPos(swpShowWindow) reveals
+// it again in its new place, so there's no extra flash. Used in mini mode so the
+// floating overlay doesn't get in the way as the user cycles their real apps.
+func setMiniAltTabHidden(hwnd uintptr, on bool) {
+	pShowWindow.Call(hwnd, swHide)
+	ex, _, _ := pGetWindowLong.Call(hwnd, gwlExStyle)
+	if on {
+		ex = (ex | wsExToolWindow) &^ wsExAppWindow
+	} else {
+		ex = (ex &^ wsExToolWindow) | wsExAppWindow
+	}
+	pSetWindowLong.Call(hwnd, gwlExStyle, ex)
 }
 
 // miniAlphaCur is the alpha currently applied to the mini window; miniFadeGen is
@@ -187,6 +214,14 @@ var (
 	miniFadeGen  int32
 )
 
+// applyAlpha writes an opacity (0–255) to the window unconditionally. Only the
+// mini-mode animations below should call it directly; everything else goes
+// through setMiniAlpha.
+func applyAlpha(hwnd uintptr, a byte) {
+	atomic.StoreInt32(&miniAlphaCur, int32(a))
+	pSetLayeredWinAttr.Call(hwnd, 0, uintptr(a), lwaAlpha)
+}
+
 // setMiniAlpha adjusts the mini window's opacity (0–255). No-op unless the
 // window is currently layered (i.e. in mini mode), so a stray hover event while
 // full-size can't accidentally fade the main window.
@@ -194,12 +229,22 @@ func setMiniAlpha(hwnd uintptr, a byte) {
 	if !isMini {
 		return
 	}
-	atomic.StoreInt32(&miniAlphaCur, int32(a))
-	pSetLayeredWinAttr.Call(hwnd, 0, uintptr(a), lwaAlpha)
+	applyAlpha(hwnd, a)
+}
+
+// easeOut interpolates from→to at step i of n along a quadratic ease-out curve
+// (fast start, gentle landing). Integer maths: with t = i/n, the curve
+// 1-(1-t)² is (2n-i)·i / n².
+//
+// Worth the four lines: a LINEAR alpha ramp reads as if it stalls just before it
+// arrives, because the last few steps of the ramp are the ones the eye can still
+// tell apart. Ease-out spends its steps where they show.
+func easeOut(from, to, i, n int) int {
+	return from + (to-from)*((2*n-i)*i)/(n*n)
 }
 
 // animateMiniAlpha glides the mini window from its current alpha to target over
-// ~120ms so the idle↔hover transition feels smooth instead of snapping. Each
+// ~130ms so the idle↔hover transition feels smooth instead of snapping. Each
 // call bumps the generation counter; an older fade goroutine sees the change and
 // bails, so rapid enter/leave never fights itself.
 func animateMiniAlpha(hwnd uintptr, target byte) {
@@ -209,16 +254,156 @@ func animateMiniAlpha(hwnd uintptr, target byte) {
 		return
 	}
 	go func() {
-		const steps = 8
+		const steps = 16
+		// A ticker, not Sleep: Sleep measures from when the previous step finished,
+		// so the syscall time in each step is added to the interval and the fade
+		// drifts progressively longer than it claims.
+		t := time.NewTicker(8 * time.Millisecond)
+		defer t.Stop()
 		for i := 1; i <= steps; i++ {
+			<-t.C
 			if atomic.LoadInt32(&miniFadeGen) != gen || !isMini {
 				return // superseded by a newer hover, or left mini mode
 			}
-			a := int(start) + (int(target)-int(start))*i/steps
-			setMiniAlpha(hwnd, byte(a))
-			time.Sleep(15 * time.Millisecond)
+			setMiniAlpha(hwnd, byte(easeOut(int(start), int(target), i, steps)))
 		}
 	}()
+}
+
+// miniSlide is how far (logical px) the panel travels while it fades in or out —
+// small on purpose: this is a settle, not a fly-in across the screen.
+const miniSlide = 18
+
+// revealMini fades the mini panel up from transparent while sliding it the last
+// few pixels into its corner. Non-blocking: the caller returns immediately so the
+// page gets told to swap into its mini layout *while* the panel is still mostly
+// transparent, which is what keeps the intermediate frames (full layout squeezed
+// into a 360px window) off screen.
+//
+// x, y is the final position; the window is expected to have been placed
+// miniSlide px down-and-right of it already.
+func revealMini(hwnd uintptr, x, y int32) {
+	gen := atomic.AddInt32(&miniFadeGen, 1)
+	off := miniSlide * getDPI(hwnd) / 96
+	go func() {
+		const steps = 14
+		t := time.NewTicker(10 * time.Millisecond)
+		defer t.Stop()
+		for i := 1; i <= steps; i++ {
+			<-t.C
+			if atomic.LoadInt32(&miniFadeGen) != gen || !isMini {
+				// Something else took over the alpha — most likely the pointer was
+				// already sitting in the corner, so hovering fired the moment the panel
+				// appeared. Land the window on its resting spot before yielding, or it
+				// would be stranded wherever the slide had got to.
+				pSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x), uintptr(y), 0, 0,
+					swpNoSize|swpNoActivate)
+				return
+			}
+			d := int32(easeOut(int(off), 0, i, steps))
+			pSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x+d), uintptr(y+d), 0, 0,
+				swpNoSize|swpNoActivate)
+			setMiniAlpha(hwnd, byte(easeOut(0, miniAlphaIdle, i, steps)))
+		}
+	}()
+}
+
+// dismissMini fades the panel back out and slides it away, BEFORE the window is
+// restored to full size — restoring underneath a still-visible mini card is what
+// made the switch back read as a glitch.
+//
+// Blocking, unlike revealMini: the restore that follows must not start until the
+// panel is invisible. ~90ms on a direct click, and only the window's alpha and
+// position change while it runs, so there is nothing for the blocked message pump
+// to have repainted anyway.
+func dismissMini(hwnd uintptr) {
+	atomic.AddInt32(&miniFadeGen, 1) // cancel any in-flight hover fade
+	var r rect
+	pGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
+	start := int(atomic.LoadInt32(&miniAlphaCur))
+	off := int(miniSlide * getDPI(hwnd) / 96)
+
+	const steps = 10
+	t := time.NewTicker(9 * time.Millisecond)
+	defer t.Stop()
+	for i := 1; i <= steps; i++ {
+		<-t.C
+		d := int32(easeOut(0, off, i, steps))
+		pSetWindowPos.Call(hwnd, hwndTopmost, uintptr(r.Left+d), uintptr(r.Top+d), 0, 0,
+			swpNoSize|swpNoActivate)
+		setMiniAlpha(hwnd, byte(easeOut(start, 0, i, steps)))
+	}
+}
+
+// restoreFromMini fades the full-size window in from transparent once it is back
+// in place, then drops the layered bit so normal (unlayered, fully composited)
+// painting resumes.
+//
+// The fade is not decoration. The page is only told to leave its mini layout
+// after the window has been resized, so the first frames after the restore still
+// show the mini card stretched across a full-size window. Fading in over ~120ms
+// covers exactly those frames.
+func restoreFromMini(hwnd uintptr) {
+	gen := atomic.AddInt32(&miniFadeGen, 1)
+	go func() {
+		const steps = 12
+		t := time.NewTicker(10 * time.Millisecond)
+		defer t.Stop()
+		for i := 1; i <= steps; i++ {
+			<-t.C
+			if atomic.LoadInt32(&miniFadeGen) != gen || isMini {
+				// Superseded. If mini mode was re-entered, that path owns the alpha and
+				// the layered bit; if it was another restore, that one finishes the job.
+				return
+			}
+			applyAlpha(hwnd, byte(easeOut(0, 255, i, steps)))
+		}
+		setMiniLayered(hwnd, false)
+	}()
+}
+
+// miniHoverGen guards the pointer watchdog the same way miniFadeGen guards the
+// fades.
+var miniHoverGen int32
+
+// watchMiniHover polls the cursor while the panel is being held opaque, and drops
+// it back to idle as soon as the pointer is outside the window.
+//
+// The page's own mouseleave is the fast path but it is not trustworthy here: the
+// panel is topmost and never activated, so a pointer that leaves in one fast
+// flick, or leaves because another window took the foreground, can skip the event
+// entirely — stranding a fully opaque overlay on top of whatever is behind it.
+// This only runs while hovered, so it adds nothing to the idle cost.
+func watchMiniHover(hwnd uintptr) {
+	gen := atomic.AddInt32(&miniHoverGen, 1)
+	go func() {
+		t := time.NewTicker(250 * time.Millisecond)
+		defer t.Stop()
+		for range t.C {
+			if atomic.LoadInt32(&miniHoverGen) != gen || !isMini {
+				return
+			}
+			var pt point
+			pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+			if !pointNearWindow(hwnd, pt.X, pt.Y) {
+				animateMiniAlpha(hwnd, miniAlphaIdle)
+				return
+			}
+		}
+	}()
+}
+
+// stopMiniHoverWatch cancels the watchdog — the pointer left through the normal
+// path, or mini mode ended.
+func stopMiniHoverWatch() { atomic.AddInt32(&miniHoverGen, 1) }
+
+// pointNearWindow reports whether a screen point lies within the window's rect
+// (plus a pixel of slop for rounding).
+func pointNearWindow(hwnd uintptr, x, y int32) bool {
+	var r rect
+	pGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
+	const slop = 2
+	return x >= r.Left-slop && x <= r.Right+slop && y >= r.Top-slop && y <= r.Bottom+slop
 }
 
 // parkDuringInit moves the webview window off-screen the moment it is created,
@@ -479,9 +664,37 @@ func winToggleMaximize(hwnd uintptr) {
 	isMaximized = true
 }
 
-func winDragStart(hwnd uintptr) {
+// winDragStart hands the window over to Windows' own move loop. x, y are the
+// PHYSICAL screen coordinates of the mouse-down that started the drag, forwarded
+// from the injected JS.
+//
+// Forwarding them is what makes dragging feel direct. WM_NCLBUTTONDOWN's lparam
+// is the anchor the move loop grabs the window by; passing 0 (as this used to)
+// leaves the move loop to fall back on wherever the cursor has got to by the time
+// this asynchronous binding call is actually serviced — a frame or two later, with
+// the pointer already moving. The grab offset is then off by exactly the distance
+// travelled in that gap, so the panel appears to stick and then catch up. With the
+// real mouse-down point the offset is exact and it tracks from the first pixel.
+//
+// Falls back to the live cursor position if the forwarded point isn't over the
+// window at all: JS reports CSS pixels scaled by devicePixelRatio, which is the
+// wrong conversion on a secondary monitor running a different scale factor.
+func winDragStart(hwnd uintptr, x, y int32) {
+	if !pointNearWindow(hwnd, x, y) {
+		var pt point
+		pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
+		x, y = pt.X, pt.Y
+	}
 	pReleaseCapture.Call()
-	pSendMessage.Call(hwnd, wmNcLButtonDown, htCaption, 0)
+	pSendMessage.Call(hwnd, wmNcLButtonDown, htCaption, makeLParam(x, y))
+}
+
+// makeLParam packs a screen point into an lparam (low word x, high word y), the
+// way MAKELPARAM does. The int16 round-trip preserves the sign so a monitor
+// positioned to the left of the primary one still resolves to negative
+// coordinates rather than ~65000.
+func makeLParam(x, y int32) uintptr {
+	return uintptr(uint32(uint16(int16(x))) | uint32(uint16(int16(y)))<<16)
 }
 
 // ─── Window state persistence ───────────────────────────────────────────────

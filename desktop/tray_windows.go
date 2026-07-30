@@ -33,6 +33,8 @@ var (
 	pGetSystemMetrics = user32.NewProc("GetSystemMetrics")
 	pIsWindowVisible  = user32.NewProc("IsWindowVisible")
 	pGetForegroundWin = user32.NewProc("GetForegroundWindow")
+	pSetWinEventHook  = user32.NewProc("SetWinEventHook")
+	pUnhookWinEvent   = user32.NewProc("UnhookWinEvent")
 )
 
 const (
@@ -74,6 +76,12 @@ const (
 
 	swpShowWindow = 0x0040
 	swpNoMove     = 0x0002
+
+	// SetWinEventHook: fire when some other process takes the foreground, and
+	// deliver it through our message queue rather than injecting into theirs.
+	eventSystemForeground  = 0x0003
+	winEventOutOfContext   = 0x0000
+	winEventSkipOwnProcess = 0x0002
 
 	hwndTopmost   = ^uintptr(0) // -1
 	hwndNoTopmost = ^uintptr(1) // -2
@@ -374,31 +382,83 @@ func winIsVisible(hwnd uintptr) bool {
 	return r != 0
 }
 
-// miniTopmostStop halts the re-assert goroutine when leaving mini mode.
-var miniTopmostStop chan struct{}
+var (
+	// miniTopmostStop halts the backstop goroutine when leaving mini mode.
+	miniTopmostStop chan struct{}
 
-// keepMiniOnTop re-pins the mini player above everything every couple of seconds
-// while it is showing. A borderless/windowed game that grabs the foreground can
-// demote other topmost windows; without this the overlay would slip behind it.
+	miniFgHook   uintptr // live SetWinEventHook handle, 0 when not in mini mode
+	miniFgHookCb uintptr // the callback trampoline; allocated once, reused forever
+	miniHookHwnd uintptr // window the callback re-pins
+)
+
+// repinMini pushes the panel back to the top of the z-order.
 // SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE means it only fixes the z-order — the
 // window never moves, resizes, or steals focus from the game. (This just manages
 // our own window; it does not touch the game process, so anti-cheat is unaffected.
 // True EXCLUSIVE-fullscreen games still can't be overlaid — a Windows limitation
 // no non-injecting app can beat; use borderless/windowed mode for those.)
-func keepMiniOnTop(hwnd uintptr, stop <-chan struct{}) {
-	t := time.NewTicker(2 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-t.C:
-			if isMini {
-				pSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0,
-					swpNoMove|swpNoSize|swpNoActivate)
+func repinMini(hwnd uintptr) {
+	pSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoActivate)
+}
+
+// miniFgProc is the WinEventProc: some other process just took the foreground, so
+// re-assert the pin. Must not block — it runs on the UI thread, dispatched out of
+// the message queue.
+func miniFgProc(hook, event, hwnd, idObject, idChild, thread, ts uintptr) uintptr {
+	if isMini && miniHookHwnd != 0 {
+		repinMini(miniHookHwnd)
+	}
+	return 0
+}
+
+// startMiniOnTop keeps the mini player above everything while it is showing. A
+// borderless/windowed game that grabs the foreground can demote other topmost
+// windows, so the pin has to be re-asserted — but the only moment it can be lost
+// is when the foreground changes, which is an event Windows will tell us about.
+// Polling for it instead (this used to tick every 700ms) meant a wakeup and a
+// syscall one-and-a-half times a second for as long as the panel was open, which
+// is exactly the standing idle cost the rest of this app has been shedding. The
+// hook costs nothing at rest and reacts faster than any poll could.
+//
+// Installed from the UI thread deliberately: WINEVENT_OUTOFCONTEXT delivers
+// through that thread's message queue, which webview is already pumping.
+// A slow ticker stays behind it as a backstop for the rare app that re-asserts
+// topmost without ever taking the foreground.
+func startMiniOnTop(hwnd uintptr, stop <-chan struct{}) {
+	miniHookHwnd = hwnd
+	if miniFgHookCb == 0 {
+		// Allocated once for the process: syscall.NewCallback slots are a finite
+		// resource and are never released, so re-registering per toggle would leak.
+		miniFgHookCb = syscall.NewCallback(miniFgProc)
+	}
+	miniFgHook, _, _ = pSetWinEventHook.Call(
+		eventSystemForeground, eventSystemForeground,
+		0, miniFgHookCb, 0, 0,
+		winEventOutOfContext|winEventSkipOwnProcess)
+
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				if isMini {
+					repinMini(hwnd)
+				}
 			}
 		}
+	}()
+}
+
+// stopMiniOnTop removes the foreground hook when mini mode ends.
+func stopMiniOnTop() {
+	if miniFgHook != 0 {
+		pUnhookWinEvent.Call(miniFgHook)
+		miniFgHook = 0
 	}
+	miniHookHwnd = 0
 }
 
 // winToggleMini shrinks the window into a compact always-on-top player parked in
@@ -406,18 +466,30 @@ func keepMiniOnTop(hwnd uintptr, stop <-chan struct{}) {
 // tell the page to swap its layout.
 func winToggleMini(hwnd uintptr) bool {
 	if isMini {
-		setMiniTranslucent(hwnd, false) // back to solid before isMini clears
+		// Fade + slide the panel away first, while it is still small and layered.
+		// Resizing back to full size underneath a visible mini card is what made the
+		// switch look like a glitch. Blocks until the panel is invisible.
+		dismissMini(hwnd)
 		isMini = false // clear first: WM_GETMINMAXINFO fires during SetWindowPos
 		if miniTopmostStop != nil {
 			close(miniTopmostStop)
 			miniTopmostStop = nil
 		}
+		stopMiniOnTop()
+		stopMiniHoverWatch()
+		// Put it back in the Alt+Tab list / taskbar as a normal app window.
+		setMiniAltTabHidden(hwnd, false)
 		pSetWindowPos.Call(hwnd, hwndNoTopmost,
 			uintptr(preMiniRect.Left), uintptr(preMiniRect.Top),
 			uintptr(preMiniRect.Right-preMiniRect.Left),
 			uintptr(preMiniRect.Bottom-preMiniRect.Top),
 			swpFrameChange|swpShowWindow)
 		pSetForegroundWindow.Call(hwnd)
+		// Still fully transparent at this point, so the resize just happened
+		// invisibly. Fade it back in and un-layer at the end — that covers the frames
+		// where the page is still wearing the mini card at full size, because the
+		// caller only tells it to switch back after this returns.
+		restoreFromMini(hwnd)
 		return false
 	}
 
@@ -438,17 +510,32 @@ func winToggleMini(hwnd uintptr) bool {
 	wa := mi.RcWork
 
 	isMini = true
+	// Drop it from Alt+Tab / taskbar so the floating overlay doesn't get in the
+	// way while cycling apps. Must be done while hidden; the SetWindowPos below
+	// (swpShowWindow) reveals it again in the mini corner, so there's no flash.
+	setMiniAltTabHidden(hwnd, true)
+	// Go layered (and fully transparent) BEFORE the window is shown, so the resize
+	// and the page's layout swap both happen out of sight; revealMini fades it up.
+	setMiniLayered(hwnd, true)
+
+	// Placed miniSlide px down-and-right of its resting spot; revealMini eases it
+	// the rest of the way in as it fades up.
+	x := wa.Right - w - margin
+	y := wa.Bottom - h - margin
+	off := miniSlide * dpi / 96
+	// swpNoActivate: reveal the overlay WITHOUT making it the foreground window.
+	// Without it, showing the mini steals focus from whatever the user was in
+	// (a game), so their next Alt+Tab lands back on Zenify (now the MRU window).
+	// The overlay is topmost, so it stays visibly on top without being activated.
 	pSetWindowPos.Call(hwnd, hwndTopmost,
-		uintptr(wa.Right-w-margin), uintptr(wa.Bottom-h-margin),
+		uintptr(x+off), uintptr(y+off),
 		uintptr(w), uintptr(h),
-		swpFrameChange|swpShowWindow)
+		swpFrameChange|swpShowWindow|swpNoActivate)
+	revealMini(hwnd, x, y)
 
-	// Make the overlay see-through so it doesn't block the view behind it.
-	setMiniTranslucent(hwnd, true)
-
-	// Keep re-pinning it on top so a fullscreen-ish game can't bury it.
+	// Keep it pinned on top so a fullscreen-ish game can't bury it.
 	miniTopmostStop = make(chan struct{})
-	go keepMiniOnTop(hwnd, miniTopmostStop)
+	startMiniOnTop(hwnd, miniTopmostStop)
 	return true
 }
 
